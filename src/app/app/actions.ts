@@ -286,7 +286,8 @@ export async function addInventoryItem(
   familyId: string,
   name: string,
   quantity: number,
-  category: string
+  category: string,
+  size: string = ""
 ) {
   const text = name.trim();
   if (!text) return { error: "Enter an item." };
@@ -297,6 +298,7 @@ export async function addInventoryItem(
     name: text,
     quantity: Math.max(0, quantity),
     category: category.trim() || null,
+    size: size.trim() || null,
   });
   if (error) return { error: error.message };
   return { success: true };
@@ -354,7 +356,8 @@ export async function createScannedItem(
   familyId: string,
   barcode: string,
   name: string,
-  category: string
+  category: string,
+  size: string = ""
 ) {
   const text = name.trim();
   if (!text) return { error: "Enter a name." };
@@ -372,6 +375,7 @@ export async function createScannedItem(
       name: text,
       quantity: 1,
       category: category.trim() || null,
+      size: size.trim() || null,
       barcode: barcode.trim() || null,
     })
     .select("id")

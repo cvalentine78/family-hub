@@ -24,6 +24,7 @@ export type InventoryItem = {
   quantity: number;
   category: string | null;
   threshold: number;
+  size: string | null;
   barcode: string | null;
   created_at: string;
 };
@@ -59,6 +60,7 @@ export default function InventoryList({
   const [items, setItems] = useState<InventoryItem[]>(initialItems);
   const [aliases, setAliases] = useState<BarcodeAlias[]>(initialAliases);
   const [name, setName] = useState("");
+  const [size, setSize] = useState("");
   const [category, setCategory] = useState("");
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
 
@@ -69,6 +71,7 @@ export default function InventoryList({
   const [showCamera, setShowCamera] = useState(false);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [pendingName, setPendingName] = useState("");
+  const [pendingSize, setPendingSize] = useState("");
   const [pendingCategory, setPendingCategory] = useState("");
   // "new" = create a new item; otherwise an existing item id to merge into.
   const [pendingTarget, setPendingTarget] = useState<string>("new");
@@ -141,9 +144,11 @@ export default function InventoryList({
     if (!name.trim()) return;
     const n = name;
     const c = category;
+    const s = size;
     setName("");
+    setSize("");
     setCategory("");
-    await addInventoryItem(familyId, n, 1, c);
+    await addInventoryItem(familyId, n, 1, c, s);
   }
 
   // Handle a scanned/entered barcode.
@@ -174,6 +179,7 @@ export default function InventoryList({
     const found = await lookupProduct(code);
     setPendingCode(code);
     setPendingName(found);
+    setPendingSize("");
     setPendingCategory("");
     setPendingTarget("new");
     setScanning(false);
@@ -188,7 +194,7 @@ export default function InventoryList({
       if (!pendingName.trim()) return;
       const nm = pendingName.trim();
       setPendingCode(null);
-      await createScannedItem(familyId, code, nm, pendingCategory);
+      await createScannedItem(familyId, code, nm, pendingCategory, pendingSize);
       setScanMsg(`Added ${nm}`);
     } else {
       const target = items.find((i) => i.id === pendingTarget);
@@ -301,19 +307,26 @@ export default function InventoryList({
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map((i) => (
                   <option key={i.id} value={i.id}>
-                    Add to: {i.name} (have {i.quantity})
+                    Add to: {i.name}
+                    {i.size ? ` ${i.size}` : ""} (have {i.quantity})
                   </option>
                 ))}
             </select>
 
             {pendingTarget === "new" ? (
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <input
                   value={pendingName}
                   onChange={(e) => setPendingName(e.target.value)}
                   placeholder="Item name (e.g. Green beans)"
                   autoFocus
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                  className="flex-1 min-w-[140px] rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                />
+                <input
+                  value={pendingSize}
+                  onChange={(e) => setPendingSize(e.target.value)}
+                  placeholder="Size (e.g. 14 oz)"
+                  className="w-28 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
                 />
                 <input
                   value={pendingCategory}
@@ -371,6 +384,12 @@ export default function InventoryList({
           className="flex-1 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
         <input
+          value={size}
+          onChange={(e) => setSize(e.target.value)}
+          placeholder="Size"
+          className="w-24 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        />
+        <input
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           placeholder="Category"
@@ -412,6 +431,12 @@ export default function InventoryList({
                       }`}
                     >
                       {item.name}
+                      {item.size && (
+                        <span className="text-gray-400 text-sm font-normal">
+                          {" "}
+                          · {item.size}
+                        </span>
+                      )}
                       {item.quantity === 0 ? (
                         <span className="ml-2 text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
                           Out
