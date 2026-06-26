@@ -59,14 +59,21 @@ export default function Onboarding() {
           </label>
         ) : (
           <label className="block">
-            <span className="text-sm font-medium text-gray-700">Join code</span>
+            <span className="text-sm font-semibold text-gray-800">
+              Enter your family&apos;s join code
+            </span>
             <input
               name="code"
               required
-              placeholder="K7P2QX"
+              placeholder="ABC123"
               autoCapitalize="characters"
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 uppercase tracking-widest focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none"
+              autoFocus
+              maxLength={6}
+              className="mt-1 w-full rounded-lg border-2 border-sky-400 bg-sky-50/40 px-3 py-3 text-center text-2xl font-bold uppercase tracking-[0.4em] text-gray-800 placeholder:text-gray-300 placeholder:font-normal placeholder:tracking-widest focus:border-sky-600 focus:ring-2 focus:ring-sky-200 outline-none"
             />
+            <span className="mt-1 block text-xs text-gray-500">
+              Ask whoever set up your family for the 6-character code.
+            </span>
           </label>
         )}
 
