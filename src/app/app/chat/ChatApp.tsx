@@ -349,7 +349,7 @@ export default function ChatApp({
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={`Message ${headerTitle}…`}
-            className="flex-1 rounded-full border border-gray-300 px-4 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+            className="flex-1 rounded-full border-2 border-gray-300 bg-gray-50 px-4 py-2 text-gray-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-500"
           />
           <button
             type="submit"
