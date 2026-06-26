@@ -5,6 +5,7 @@ import {
   APIProvider,
   Map as GoogleMap,
   AdvancedMarker,
+  useMap,
 } from "@vis.gl/react-google-maps";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
@@ -189,6 +190,7 @@ export default function FamilyMap({
             disableDefaultUI={false}
             style={{ width: "100%", height: "70vh" }}
           >
+            <FitBounds locs={locArray} />
             {locArray.map((loc) => {
               const m = memberById.get(loc.user_id);
               const name = m?.display_name ?? "Member";
@@ -227,4 +229,34 @@ export default function FamilyMap({
       </div>
     </div>
   );
+}
+
+// Auto-fits the map so every shared location is visible. One person → a close
+// zoom; multiple people → zoom out to frame them all.
+function FitBounds({ locs }: { locs: Loc[] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map || locs.length === 0) return;
+
+    if (locs.length === 1) {
+      map.setCenter({ lat: locs[0].lat, lng: locs[0].lng });
+      map.setZoom(17);
+      return;
+    }
+
+    const lats = locs.map((l) => l.lat);
+    const lngs = locs.map((l) => l.lng);
+    map.fitBounds(
+      {
+        north: Math.max(...lats),
+        south: Math.min(...lats),
+        east: Math.max(...lngs),
+        west: Math.min(...lngs),
+      },
+      80 // padding in px so pins aren't on the edge
+    );
+  }, [map, locs]);
+
+  return null;
 }
