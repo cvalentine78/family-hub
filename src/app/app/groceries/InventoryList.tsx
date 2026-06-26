@@ -15,6 +15,31 @@ import {
 
 export type BarcodeAlias = { barcode: string; item_id: string };
 
+const UNITS = [
+  "",
+  "oz",
+  "fl oz",
+  "lb",
+  "g",
+  "kg",
+  "mL",
+  "L",
+  "ct",
+  "pack",
+  "gal",
+  "qt",
+  "pt",
+  "cup",
+  "can",
+  "jar",
+  "box",
+  "bag",
+];
+
+function combineSize(amount: string, unit: string) {
+  return [amount.trim(), unit].filter(Boolean).join(" ");
+}
+
 // Camera scanner is only loaded when the user opens it.
 const BarcodeScanner = dynamic(() => import("./BarcodeScanner"), { ssr: false });
 
@@ -60,7 +85,8 @@ export default function InventoryList({
   const [items, setItems] = useState<InventoryItem[]>(initialItems);
   const [aliases, setAliases] = useState<BarcodeAlias[]>(initialAliases);
   const [name, setName] = useState("");
-  const [size, setSize] = useState("");
+  const [sizeAmt, setSizeAmt] = useState("");
+  const [sizeUnit, setSizeUnit] = useState("");
   const [category, setCategory] = useState("");
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
 
@@ -71,7 +97,8 @@ export default function InventoryList({
   const [showCamera, setShowCamera] = useState(false);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [pendingName, setPendingName] = useState("");
-  const [pendingSize, setPendingSize] = useState("");
+  const [pendingSizeAmt, setPendingSizeAmt] = useState("");
+  const [pendingSizeUnit, setPendingSizeUnit] = useState("");
   const [pendingCategory, setPendingCategory] = useState("");
   // "new" = create a new item; otherwise an existing item id to merge into.
   const [pendingTarget, setPendingTarget] = useState<string>("new");
@@ -144,9 +171,10 @@ export default function InventoryList({
     if (!name.trim()) return;
     const n = name;
     const c = category;
-    const s = size;
+    const s = combineSize(sizeAmt, sizeUnit);
     setName("");
-    setSize("");
+    setSizeAmt("");
+    setSizeUnit("");
     setCategory("");
     await addInventoryItem(familyId, n, 1, c, s);
   }
@@ -179,7 +207,8 @@ export default function InventoryList({
     const found = await lookupProduct(code);
     setPendingCode(code);
     setPendingName(found);
-    setPendingSize("");
+    setPendingSizeAmt("");
+    setPendingSizeUnit("");
     setPendingCategory("");
     setPendingTarget("new");
     setScanning(false);
@@ -194,7 +223,13 @@ export default function InventoryList({
       if (!pendingName.trim()) return;
       const nm = pendingName.trim();
       setPendingCode(null);
-      await createScannedItem(familyId, code, nm, pendingCategory, pendingSize);
+      await createScannedItem(
+        familyId,
+        code,
+        nm,
+        pendingCategory,
+        combineSize(pendingSizeAmt, pendingSizeUnit)
+      );
       setScanMsg(`Added ${nm}`);
     } else {
       const target = items.find((i) => i.id === pendingTarget);
@@ -323,16 +358,28 @@ export default function InventoryList({
                   className="flex-1 min-w-[140px] rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
                 />
                 <input
-                  value={pendingSize}
-                  onChange={(e) => setPendingSize(e.target.value)}
-                  placeholder="Size (e.g. 14 oz)"
-                  className="w-28 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                  value={pendingSizeAmt}
+                  onChange={(e) => setPendingSizeAmt(e.target.value)}
+                  placeholder="Size"
+                  inputMode="decimal"
+                  className="w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-center outline-none focus:border-sky-500"
                 />
+                <select
+                  value={pendingSizeUnit}
+                  onChange={(e) => setPendingSizeUnit(e.target.value)}
+                  className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-sky-500 text-gray-700"
+                >
+                  {UNITS.map((u) => (
+                    <option key={u} value={u}>
+                      {u === "" ? "unit" : u}
+                    </option>
+                  ))}
+                </select>
                 <input
                   value={pendingCategory}
                   onChange={(e) => setPendingCategory(e.target.value)}
                   placeholder="Category"
-                  className="w-28 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                  className="w-24 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
                 />
               </div>
             ) : (
@@ -384,16 +431,29 @@ export default function InventoryList({
           className="flex-1 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
         <input
-          value={size}
-          onChange={(e) => setSize(e.target.value)}
+          value={sizeAmt}
+          onChange={(e) => setSizeAmt(e.target.value)}
           placeholder="Size"
-          className="w-24 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          inputMode="decimal"
+          className="w-16 rounded-lg border border-gray-300 px-2 py-2 text-center outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
+        <select
+          value={sizeUnit}
+          onChange={(e) => setSizeUnit(e.target.value)}
+          className="w-20 rounded-lg border border-gray-300 px-2 py-2 outline-none focus:border-sky-500 text-gray-700"
+          title="Unit"
+        >
+          {UNITS.map((u) => (
+            <option key={u} value={u}>
+              {u === "" ? "unit" : u}
+            </option>
+          ))}
+        </select>
         <input
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           placeholder="Category"
-          className="w-32 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          className="w-28 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
         <button
           type="submit"
