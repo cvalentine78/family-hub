@@ -43,8 +43,53 @@ export default function FamilyMap({
   const [locations, setLocations] = useState<Map<string, Loc>>(
     () => new Map(initialLocations.map((l) => [l.user_id, l]))
   );
+  const [updateStatus, setUpdateStatus] = useState<
+    "idle" | "working" | "ok" | "error"
+  >("idle");
+  const [statusMsg, setStatusMsg] = useState<string>("");
 
   const memberById = new Map(members.map((m) => [m.user_id, m]));
+
+  // Grab one fresh fix and write it immediately — a reliable manual fallback.
+  function updateNow() {
+    if (!navigator.geolocation) {
+      setUpdateStatus("error");
+      setStatusMsg("This device doesn't support location.");
+      return;
+    }
+    setUpdateStatus("working");
+    setStatusMsg("Getting your location…");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        const supabase = createClient();
+        const { error } = await supabase.from("locations").upsert({
+          user_id: currentUserId,
+          family_id: familyId,
+          lat: latitude,
+          lng: longitude,
+          accuracy,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) {
+          setUpdateStatus("error");
+          setStatusMsg("Couldn't save location. Try again.");
+        } else {
+          setUpdateStatus("ok");
+          setStatusMsg("Your location is on the map ✓");
+        }
+      },
+      (err) => {
+        setUpdateStatus("error");
+        setStatusMsg(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission is blocked. Allow it in your browser's site settings, then try again."
+            : "Couldn't get your location. Make sure location is on and try again."
+        );
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  }
 
   // Live updates: subscribe to location changes for this family.
   useEffect(() => {
@@ -99,18 +144,40 @@ export default function FamilyMap({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
         <p className="text-sm text-gray-500">
           {locArray.length} member{locArray.length === 1 ? "" : "s"} sharing
           location
         </p>
-        <Link
-          href={`/app/members/${currentUserId}`}
-          className="text-sm font-medium text-sky-600 hover:text-sky-700"
-        >
-          Location settings
-        </Link>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={updateNow}
+            disabled={updateStatus === "working"}
+            className="text-sm font-medium bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
+          >
+            {updateStatus === "working" ? "Locating…" : "📍 Update my location"}
+          </button>
+          <Link
+            href={`/app/members/${currentUserId}`}
+            className="text-sm font-medium text-sky-600 hover:text-sky-700"
+          >
+            Settings
+          </Link>
+        </div>
       </div>
+      {statusMsg && (
+        <p
+          className={`text-sm mb-3 ${
+            updateStatus === "error"
+              ? "text-red-600"
+              : updateStatus === "ok"
+              ? "text-green-600"
+              : "text-gray-500"
+          }`}
+        >
+          {statusMsg}
+        </p>
+      )}
 
       <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
         <APIProvider apiKey={apiKey}>
