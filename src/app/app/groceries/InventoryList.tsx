@@ -7,6 +7,7 @@ import {
   addInventoryItem,
   updateInventoryQuantity,
   updateInventoryThreshold,
+  updateInventoryDetails,
   deleteInventoryItem,
   addInventoryToGrocery,
   createScannedItem,
@@ -38,6 +39,18 @@ const UNITS = [
 
 function combineSize(amount: string, unit: string) {
   return [amount.trim(), unit].filter(Boolean).join(" ");
+}
+
+// Split a stored size like "14 oz" back into amount + unit for editing.
+function splitSize(size: string | null): { amt: string; unit: string } {
+  if (!size) return { amt: "", unit: "" };
+  const parts = size.trim().split(/\s+/);
+  const last = parts[parts.length - 1];
+  if (parts.length > 1 && UNITS.includes(last)) {
+    return { amt: parts.slice(0, -1).join(" "), unit: last };
+  }
+  if (UNITS.includes(size.trim())) return { amt: "", unit: size.trim() };
+  return { amt: size, unit: "" };
 }
 
 const DEFAULT_CATEGORIES = [
@@ -116,6 +129,13 @@ export default function InventoryList({
   // Search + category filter for browsing inventory.
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
+
+  // Editing an existing item.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editAmt, setEditAmt] = useState("");
+  const [editUnit, setEditUnit] = useState("");
+  const [editCategory, setEditCategory] = useState("");
 
   // Barcode scanning state.
   const [scanInput, setScanInput] = useState("");
@@ -294,6 +314,31 @@ export default function InventoryList({
       prev.map((i) => (i.id === item.id ? { ...i, threshold: next } : i))
     );
     await updateInventoryThreshold(item.id, next);
+  }
+
+  function startEdit(item: InventoryItem) {
+    const { amt, unit } = splitSize(item.size);
+    setEditingId(item.id);
+    setEditName(item.name);
+    setEditAmt(amt);
+    setEditUnit(unit);
+    setEditCategory(item.category ?? "");
+  }
+
+  async function saveEdit(id: string) {
+    if (!editName.trim()) return;
+    const newName = editName.trim();
+    const newSize = combineSize(editAmt, editUnit);
+    const newCat = editCategory.trim();
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === id
+          ? { ...i, name: newName, size: newSize || null, category: newCat || null }
+          : i
+      )
+    );
+    setEditingId(null);
+    await updateInventoryDetails(id, newName, newSize, newCat);
   }
 
   async function addToList(item: InventoryItem) {
@@ -581,86 +626,150 @@ export default function InventoryList({
                 {cat}
               </h3>
               <ul className="space-y-1">
-                {list.map((item) => (
-                  <li
-                    key={item.id}
-                    className="flex items-center gap-3 py-2 px-1 group"
-                  >
-                    <span
-                      className={`flex-1 ${
-                        item.quantity === 0 ? "text-red-500" : "text-gray-800"
-                      }`}
+                {list.map((item) =>
+                  editingId === item.id ? (
+                    <li
+                      key={item.id}
+                      className="py-2 px-1 bg-sky-50 rounded-lg"
                     >
-                      {item.name}
-                      {item.size && (
-                        <span className="text-gray-400 text-sm font-normal">
-                          {" "}
-                          · {item.size}
-                        </span>
-                      )}
-                      {item.quantity === 0 ? (
-                        <span className="ml-2 text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
-                          Out
-                        </span>
-                      ) : (
-                        item.quantity <= item.threshold && (
-                          <span className="ml-2 text-xs bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">
-                            Low
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          placeholder="Name"
+                          className="flex-1 min-w-0 basis-full sm:basis-auto rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                        />
+                        <input
+                          value={editAmt}
+                          onChange={(e) => setEditAmt(e.target.value)}
+                          placeholder="Size"
+                          inputMode="decimal"
+                          className="w-16 rounded-lg border border-gray-300 px-2 py-2 text-center text-sm outline-none focus:border-sky-500"
+                        />
+                        <select
+                          value={editUnit}
+                          onChange={(e) => setEditUnit(e.target.value)}
+                          className="w-20 rounded-lg border border-gray-300 px-2 py-2 text-sm outline-none focus:border-sky-500 text-gray-700"
+                        >
+                          {UNITS.map((u) => (
+                            <option key={u} value={u}>
+                              {u === "" ? "unit" : u}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={editCategory}
+                          onChange={(e) => setEditCategory(e.target.value)}
+                          placeholder="Category"
+                          list="category-options"
+                          className="flex-1 min-w-[110px] rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+                        />
+                        <button
+                          onClick={() => saveEdit(item.id)}
+                          disabled={!editName.trim()}
+                          className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-medium px-4 py-2 rounded-lg text-sm"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="text-sm text-gray-400 hover:text-gray-700 px-2"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </li>
+                  ) : (
+                    <li
+                      key={item.id}
+                      className="flex items-center gap-2 py-2 px-1 group"
+                    >
+                      <button
+                        onClick={() => startEdit(item)}
+                        className={`flex-1 min-w-0 text-left ${
+                          item.quantity === 0 ? "text-red-500" : "text-gray-800"
+                        }`}
+                        title="Tap to edit"
+                      >
+                        <span className="truncate">{item.name}</span>
+                        {item.size && (
+                          <span className="text-gray-400 text-sm font-normal">
+                            {" "}
+                            · {item.size}
                           </span>
-                        )
-                      )}
-                    </span>
-
-                    <label className="flex items-center gap-1 text-xs text-gray-400">
-                      <span className="hidden sm:inline">low&nbsp;≤</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={item.threshold}
-                        onChange={(e) =>
-                          changeThreshold(item, parseInt(e.target.value) || 0)
-                        }
-                        className="w-12 rounded border border-gray-200 px-1.5 py-1 text-center text-gray-700 outline-none focus:border-sky-400"
-                        title="Auto-add to shopping list at or below this amount"
-                      />
-                    </label>
-
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => changeQty(item, -1)}
-                        className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600"
-                        aria-label="Decrease"
-                      >
-                        −
+                        )}
+                        {item.quantity === 0 ? (
+                          <span className="ml-2 text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
+                            Out
+                          </span>
+                        ) : (
+                          item.quantity <= item.threshold && (
+                            <span className="ml-2 text-xs bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">
+                              Low
+                            </span>
+                          )
+                        )}
                       </button>
-                      <span className="w-7 text-center font-medium text-gray-800">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() => changeQty(item, 1)}
-                        className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600"
-                        aria-label="Increase"
-                      >
-                        +
-                      </button>
-                    </div>
 
-                    <button
-                      onClick={() => addToList(item)}
-                      className="text-xs font-medium text-sky-600 hover:text-sky-700 whitespace-nowrap"
-                      title="Add to shopping list"
-                    >
-                      + List
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="text-gray-400 hover:text-red-600 transition-colors"
-                      aria-label="Delete"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
+                      <label className="flex items-center gap-1 text-xs text-gray-400">
+                        <span className="hidden sm:inline">low&nbsp;≤</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={item.threshold}
+                          onChange={(e) =>
+                            changeThreshold(item, parseInt(e.target.value) || 0)
+                          }
+                          className="w-11 rounded border border-gray-200 px-1.5 py-1 text-center text-gray-700 outline-none focus:border-sky-400"
+                          title="Auto-add to shopping list at or below this amount"
+                        />
+                      </label>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => changeQty(item, -1)}
+                          className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600"
+                          aria-label="Decrease"
+                        >
+                          −
+                        </button>
+                        <span className="w-6 text-center font-medium text-gray-800">
+                          {item.quantity}
+                        </span>
+                        <button
+                          onClick={() => changeQty(item, 1)}
+                          className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600"
+                          aria-label="Increase"
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => startEdit(item)}
+                        className="text-gray-400 hover:text-sky-600"
+                        aria-label="Edit"
+                        title="Edit"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={() => addToList(item)}
+                        className="text-xs font-medium text-sky-600 hover:text-sky-700 whitespace-nowrap"
+                        title="Add to shopping list"
+                      >
+                        + List
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        className="text-gray-400 hover:text-red-600 transition-colors"
+                        aria-label="Delete"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  )
+                )}
               </ul>
             </div>
           ))}

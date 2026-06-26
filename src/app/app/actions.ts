@@ -428,6 +428,29 @@ export async function linkScanToItem(
   return { success: true };
 }
 
+export async function updateInventoryDetails(
+  id: string,
+  name: string,
+  size: string,
+  category: string
+) {
+  const text = name.trim();
+  if (!text) return { error: "Enter a name." };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("inventory_items")
+    .update({
+      name: text,
+      size: size.trim() || null,
+      category: category.trim() || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
 export async function updateInventoryThreshold(id: string, threshold: number) {
   const supabase = await createClient();
   const {
