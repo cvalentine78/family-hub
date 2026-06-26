@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { createClient } from "@/lib/supabase/client";
 
@@ -12,6 +12,8 @@ export default function NativePushRegistrar({ userId }: { userId: string }) {
     if (!Capacitor.isNativePlatform()) return;
 
     const supabase = createClient();
+    let handles: PluginListenerHandle[] = [];
+    let cancelled = false;
 
     async function saveToken(token: string) {
       await supabase.from("device_tokens").upsert(
@@ -25,33 +27,38 @@ export default function NativePushRegistrar({ userId }: { userId: string }) {
       );
     }
 
-    async function register() {
+    async function setup() {
+      // Attach listeners BEFORE registering, or a cached FCM token can fire
+      // the "registration" event before we're listening (and get dropped).
+      const reg = await PushNotifications.addListener("registration", (token) => {
+        void saveToken(token.value);
+      });
+      const regError = await PushNotifications.addListener(
+        "registrationError",
+        (err) => {
+          console.error("Push registration error:", err.error);
+        }
+      );
+      handles = [reg, regError];
+      if (cancelled) {
+        handles.forEach((h) => h.remove());
+        return;
+      }
+
       let perm = await PushNotifications.checkPermissions();
       if (perm.receive === "prompt" || perm.receive === "prompt-with-rationale") {
         perm = await PushNotifications.requestPermissions();
       }
-      if (perm.receive !== "granted") return;
-      await PushNotifications.register();
+      if (perm.receive === "granted") {
+        await PushNotifications.register();
+      }
     }
 
-    const registration = PushNotifications.addListener(
-      "registration",
-      (token) => {
-        void saveToken(token.value);
-      }
-    );
-    const regError = PushNotifications.addListener(
-      "registrationError",
-      (err) => {
-        console.error("Push registration error:", err.error);
-      }
-    );
-
-    void register();
+    void setup();
 
     return () => {
-      void registration.then((h) => h.remove());
-      void regError.then((h) => h.remove());
+      cancelled = true;
+      handles.forEach((h) => h.remove());
     };
   }, [userId]);
 
