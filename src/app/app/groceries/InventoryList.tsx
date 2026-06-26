@@ -89,23 +89,39 @@ export type InventoryItem = {
   created_at: string;
 };
 
-// Look up a product name from its barcode via Open Food Facts (free, no key).
-async function lookupProduct(code: string): Promise<string> {
+// Parse a package-size string like "397 g" into an amount + a known unit.
+function parseOffSize(q: string): { amt: string; unit: string } {
+  const m = q.match(/([\d.]+)\s*([a-zA-Z ]+)/);
+  if (!m) return { amt: "", unit: "" };
+  const amt = m[1];
+  let unit = m[2].trim().toLowerCase();
+  if (unit === "ml") unit = "mL";
+  else if (unit === "l") unit = "L";
+  else if (unit === "fl. oz" || unit === "floz") unit = "fl oz";
+  return UNITS.includes(unit) ? { amt, unit } : { amt: q.trim(), unit: "" };
+}
+
+// Look up a product (name + package size) from its barcode via Open Food Facts.
+async function lookupProduct(
+  code: string
+): Promise<{ name: string; size: { amt: string; unit: string } }> {
   try {
     const res = await fetch(
-      `https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands`
+      `https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands,quantity`
     );
     const data = await res.json();
     if (data.status === 1 && data.product) {
       const p = data.product;
-      const name = (p.product_name || "").trim();
+      let name = (p.product_name || "").trim();
       const brand = (p.brands || "").split(",")[0]?.trim();
-      if (name) return brand && !name.includes(brand) ? `${brand} ${name}` : name;
+      if (name && brand && !name.includes(brand)) name = `${brand} ${name}`;
+      const size = p.quantity ? parseOffSize(String(p.quantity)) : { amt: "", unit: "" };
+      return { name, size };
     }
   } catch {
-    // network/lookup failure — caller falls back to manual naming
+    // network/lookup failure — caller falls back to manual entry
   }
-  return "";
+  return { name: "", size: { amt: "", unit: "" } };
 }
 
 export default function InventoryList({
@@ -144,6 +160,7 @@ export default function InventoryList({
   const [showCamera, setShowCamera] = useState(false);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [pendingName, setPendingName] = useState("");
+  const [pendingQty, setPendingQty] = useState("1");
   const [pendingSizeAmt, setPendingSizeAmt] = useState("");
   const [pendingSizeUnit, setPendingSizeUnit] = useState("");
   const [pendingCategory, setPendingCategory] = useState("");
@@ -251,13 +268,14 @@ export default function InventoryList({
       return;
     }
 
-    // New barcode — look up a suggested name and let the user confirm where it
-    // goes (new item, or merge into an existing one like "Green beans").
+    // New barcode — look up a suggested name + size, then let the user confirm
+    // where it goes (new item, or merge into an existing one like "Green beans").
     const found = await lookupProduct(code);
     setPendingCode(code);
-    setPendingName(found);
-    setPendingSizeAmt("");
-    setPendingSizeUnit("");
+    setPendingName(found.name);
+    setPendingQty("1");
+    setPendingSizeAmt(found.size.amt);
+    setPendingSizeUnit(found.size.unit);
     setPendingCategory("");
     setPendingTarget("new");
     setScanning(false);
@@ -272,14 +290,16 @@ export default function InventoryList({
       if (!pendingName.trim()) return;
       const nm = pendingName.trim();
       setPendingCode(null);
+      const q = Math.max(1, parseInt(pendingQty) || 1);
       await createScannedItem(
         familyId,
         code,
         nm,
         pendingCategory,
-        combineSize(pendingSizeAmt, pendingSizeUnit)
+        combineSize(pendingSizeAmt, pendingSizeUnit),
+        q
       );
-      setScanMsg(`Added ${nm}`);
+      setScanMsg(`Added ${nm}${q > 1 ? ` ×${q}` : ""}`);
     } else {
       const target = items.find((i) => i.id === pendingTarget);
       setPendingCode(null);
@@ -452,6 +472,15 @@ export default function InventoryList({
                   autoFocus
                   className="flex-1 min-w-[140px] rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
                 />
+                <label className="flex items-center gap-1 text-xs text-gray-400">
+                  Qty
+                  <input
+                    value={pendingQty}
+                    onChange={(e) => setPendingQty(e.target.value)}
+                    inputMode="numeric"
+                    className="w-12 rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-center text-gray-900 outline-none focus:border-sky-500"
+                  />
+                </label>
                 <input
                   value={pendingSizeAmt}
                   onChange={(e) => setPendingSizeAmt(e.target.value)}

@@ -357,7 +357,8 @@ export async function createScannedItem(
   barcode: string,
   name: string,
   category: string,
-  size: string = ""
+  size: string = "",
+  quantity: number = 1
 ) {
   const text = name.trim();
   if (!text) return { error: "Enter a name." };
@@ -373,7 +374,7 @@ export async function createScannedItem(
     .insert({
       family_id: familyId,
       name: text,
-      quantity: 1,
+      quantity: Math.max(1, quantity),
       category: category.trim() || null,
       size: size.trim() || null,
       barcode: barcode.trim() || null,
