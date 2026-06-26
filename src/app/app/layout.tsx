@@ -9,6 +9,7 @@ import {
 import SignOutButton from "./SignOutButton";
 import LocationSharer from "./LocationSharer";
 import NativeLocationSharer from "./NativeLocationSharer";
+import NativePushRegistrar from "./NativePushRegistrar";
 
 export default async function AppLayout({
   children,
@@ -51,6 +52,7 @@ export default async function AppLayout({
           />
         </>
       )}
+      <NativePushRegistrar userId={user.id} />
       {children}
     </div>
   );
