@@ -1,0 +1,38 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+const TABS = [
+  { href: "/app", label: "Home", icon: "🏠" },
+  { href: "/app/calendar", label: "Calendar", icon: "📅" },
+  { href: "/app/chat", label: "Chat", icon: "💬" },
+  { href: "/app/groceries", label: "Groceries", icon: "🛒" },
+  { href: "/app/map", label: "Map", icon: "📍" },
+  { href: "/app/members", label: "Members", icon: "👨‍👩‍👧‍👦" },
+];
+
+export default function Nav() {
+  const pathname = usePathname();
+  return (
+    <nav className="flex gap-1">
+      {TABS.map((tab) => {
+        const active = pathname === tab.href;
+        return (
+          <Link
+            key={tab.href}
+            href={tab.href}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              active
+                ? "bg-sky-100 text-sky-700"
+                : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
+            }`}
+          >
+            <span className="mr-1">{tab.icon}</span>
+            {tab.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
