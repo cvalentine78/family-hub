@@ -711,18 +711,25 @@ export default function InventoryList({
                   ) : (
                     <li
                       key={item.id}
-                      className="flex items-center gap-2 py-2 px-1 group"
+                      className="flex flex-col sm:flex-row sm:items-center gap-2 py-2 px-1 border-b border-gray-50 sm:border-0"
                     >
+                      {/* Name + size + status — own line on mobile */}
                       <button
                         onClick={() => startEdit(item)}
-                        className={`flex-1 min-w-0 text-left ${
-                          item.quantity === 0 ? "text-red-500" : "text-gray-800"
-                        }`}
+                        className="flex-1 min-w-0 text-left"
                         title="Tap to edit"
                       >
-                        <span className="truncate">{item.name}</span>
+                        <span
+                          className={`font-medium ${
+                            item.quantity === 0
+                              ? "text-red-500"
+                              : "text-gray-800"
+                          }`}
+                        >
+                          {item.name}
+                        </span>
                         {item.size && (
-                          <span className="text-gray-400 text-sm font-normal">
+                          <span className="text-gray-400 text-sm">
                             {" "}
                             · {item.size}
                           </span>
@@ -740,62 +747,66 @@ export default function InventoryList({
                         )}
                       </button>
 
-                      <label className="flex items-center gap-1 text-xs text-gray-400">
-                        <span className="hidden sm:inline">low&nbsp;≤</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={item.threshold}
-                          onChange={(e) =>
-                            changeThreshold(item, parseInt(e.target.value) || 0)
-                          }
-                          className="w-11 rounded border border-gray-200 px-1.5 py-1 text-center text-gray-700 outline-none focus:border-sky-400"
-                          title="Auto-add to shopping list at or below this amount"
-                        />
-                      </label>
+                      {/* Controls — own line on mobile, right-aligned */}
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => changeQty(item, -1)}
+                            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 text-lg"
+                            aria-label="Decrease"
+                          >
+                            −
+                          </button>
+                          <span className="w-7 text-center font-semibold text-gray-800">
+                            {item.quantity}
+                          </span>
+                          <button
+                            onClick={() => changeQty(item, 1)}
+                            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 text-lg"
+                            aria-label="Increase"
+                          >
+                            +
+                          </button>
+                        </div>
 
-                      <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-1 text-xs text-gray-400">
+                          <span>low&nbsp;≤</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.threshold}
+                            onChange={(e) =>
+                              changeThreshold(item, parseInt(e.target.value) || 0)
+                            }
+                            className="w-11 rounded border border-gray-200 px-1.5 py-1 text-center text-gray-700 outline-none focus:border-sky-400"
+                            title="Auto-add to shopping list at or below this amount"
+                          />
+                        </label>
+
                         <button
-                          onClick={() => changeQty(item, -1)}
-                          className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600"
-                          aria-label="Decrease"
+                          onClick={() => addToList(item)}
+                          className="text-sm"
+                          aria-label="Add to shopping list"
+                          title="Add to shopping list"
                         >
-                          −
+                          🛒
                         </button>
-                        <span className="w-6 text-center font-medium text-gray-800">
-                          {item.quantity}
-                        </span>
                         <button
-                          onClick={() => changeQty(item, 1)}
-                          className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600"
-                          aria-label="Increase"
+                          onClick={() => startEdit(item)}
+                          className="text-gray-400 hover:text-sky-600"
+                          aria-label="Edit"
+                          title="Edit"
                         >
-                          +
+                          ✏️
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="text-gray-400 hover:text-red-600 transition-colors"
+                          aria-label="Delete"
+                        >
+                          ✕
                         </button>
                       </div>
-
-                      <button
-                        onClick={() => startEdit(item)}
-                        className="text-gray-400 hover:text-sky-600"
-                        aria-label="Edit"
-                        title="Edit"
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        onClick={() => addToList(item)}
-                        className="text-xs font-medium text-sky-600 hover:text-sky-700 whitespace-nowrap"
-                        title="Add to shopping list"
-                      >
-                        + List
-                      </button>
-                      <button
-                        onClick={() => handleDelete(item.id)}
-                        className="text-gray-400 hover:text-red-600 transition-colors"
-                        aria-label="Delete"
-                      >
-                        ✕
-                      </button>
                     </li>
                   )
                 )}
