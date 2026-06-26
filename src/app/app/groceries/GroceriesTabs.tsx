@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import ShoppingList, { type GroceryItem } from "./ShoppingList";
-import InventoryList, { type InventoryItem } from "./InventoryList";
+import InventoryList, {
+  type InventoryItem,
+  type BarcodeAlias,
+} from "./InventoryList";
 import MealsList from "./MealsList";
 import LeftoversList from "./LeftoversList";
 import type { Member } from "@/lib/family";
@@ -21,6 +24,7 @@ export default function GroceriesTabs({
   members,
   groceryItems,
   inventoryItems,
+  inventoryAliases,
   dishes,
   ingredients,
   favorites,
@@ -33,6 +37,7 @@ export default function GroceriesTabs({
   members: Member[];
   groceryItems: GroceryItem[];
   inventoryItems: InventoryItem[];
+  inventoryAliases: BarcodeAlias[];
   dishes: Dish[];
   ingredients: DishIngredient[];
   favorites: DishFavorite[];
@@ -97,7 +102,11 @@ export default function GroceriesTabs({
       </div>
       {visited.has("inventory") && (
         <div className={tab === "inventory" ? "" : "hidden"}>
-          <InventoryList familyId={familyId} initialItems={inventoryItems} />
+          <InventoryList
+            familyId={familyId}
+            initialItems={inventoryItems}
+            initialAliases={inventoryAliases}
+          />
         </div>
       )}
       {visited.has("meals") && (

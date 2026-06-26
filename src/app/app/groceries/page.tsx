@@ -4,7 +4,7 @@ import { getCurrentFamily, getFamilyMembers } from "@/lib/family";
 import Nav from "../Nav";
 import GroceriesTabs from "./GroceriesTabs";
 import type { GroceryItem } from "./ShoppingList";
-import type { InventoryItem } from "./InventoryList";
+import type { InventoryItem, BarcodeAlias } from "./InventoryList";
 import type {
   Dish,
   DishIngredient,
@@ -32,6 +32,11 @@ export default async function GroceriesPage() {
   const { data: inventory } = await supabase
     .from("inventory_items")
     .select("id, name, quantity, category, threshold, barcode, created_at")
+    .eq("family_id", family.id);
+
+  const { data: aliases } = await supabase
+    .from("inventory_barcodes")
+    .select("barcode, item_id")
     .eq("family_id", family.id);
 
   const { data: dishes } = await supabase
@@ -82,6 +87,7 @@ export default async function GroceriesPage() {
         members={members}
         groceryItems={(grocery as GroceryItem[]) ?? []}
         inventoryItems={(inventory as InventoryItem[]) ?? []}
+        inventoryAliases={(aliases as BarcodeAlias[]) ?? []}
         dishes={(dishes as Dish[]) ?? []}
         ingredients={(ingredients as DishIngredient[]) ?? []}
         favorites={(favorites as DishFavorite[]) ?? []}

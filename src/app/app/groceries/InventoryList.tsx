@@ -9,8 +9,11 @@ import {
   updateInventoryThreshold,
   deleteInventoryItem,
   addInventoryToGrocery,
-  scanInventoryItem,
+  createScannedItem,
+  linkScanToItem,
 } from "../actions";
+
+export type BarcodeAlias = { barcode: string; item_id: string };
 
 // Camera scanner is only loaded when the user opens it.
 const BarcodeScanner = dynamic(() => import("./BarcodeScanner"), { ssr: false });
@@ -47,11 +50,14 @@ async function lookupProduct(code: string): Promise<string> {
 export default function InventoryList({
   familyId,
   initialItems,
+  initialAliases,
 }: {
   familyId: string;
   initialItems: InventoryItem[];
+  initialAliases: BarcodeAlias[];
 }) {
   const [items, setItems] = useState<InventoryItem[]>(initialItems);
+  const [aliases, setAliases] = useState<BarcodeAlias[]>(initialAliases);
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
@@ -63,6 +69,9 @@ export default function InventoryList({
   const [showCamera, setShowCamera] = useState(false);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [pendingName, setPendingName] = useState("");
+  const [pendingCategory, setPendingCategory] = useState("");
+  // "new" = create a new item; otherwise an existing item id to merge into.
+  const [pendingTarget, setPendingTarget] = useState<string>("new");
 
   useEffect(() => {
     const supabase = createClient();
@@ -96,6 +105,37 @@ export default function InventoryList({
     };
   }, [familyId]);
 
+  // Keep barcode→item mappings current across devices.
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`barcodes:${familyId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "inventory_barcodes",
+          filter: `family_id=eq.${familyId}`,
+        },
+        (payload) => {
+          setAliases((prev) => {
+            if (payload.eventType === "DELETE") {
+              const old = payload.old as BarcodeAlias;
+              return prev.filter((a) => a.barcode !== old.barcode);
+            }
+            const row = payload.new as BarcodeAlias;
+            const exists = prev.some((a) => a.barcode === row.barcode);
+            return exists ? prev : [...prev, row];
+          });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [familyId]);
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
@@ -114,39 +154,55 @@ export default function InventoryList({
     setScanning(true);
     setScanMsg(null);
 
-    // Already in inventory? Just bump it.
-    const existing = items.find((i) => i.barcode === code);
+    // Known barcode (any brand mapped to an item)? Just bump that item.
+    const alias = aliases.find((a) => a.barcode === code);
+    const existing = alias && items.find((i) => i.id === alias.item_id);
     if (existing) {
-      await scanInventoryItem(familyId, code, "");
+      setItems((prev) =>
+        prev.map((i) =>
+          i.id === existing.id ? { ...i, quantity: i.quantity + 1 } : i
+        )
+      );
+      await updateInventoryQuantity(existing.id, existing.quantity + 1);
       setScanMsg(`+1 ${existing.name}`);
       setScanning(false);
       return;
     }
 
-    // Look the product up by barcode.
+    // New barcode — look up a suggested name and let the user confirm where it
+    // goes (new item, or merge into an existing one like "Green beans").
     const found = await lookupProduct(code);
-    if (found) {
-      await scanInventoryItem(familyId, code, found);
-      setScanMsg(`Added ${found}`);
-      setScanning(false);
-      return;
-    }
-
-    // Unknown barcode — ask the user to name it.
     setPendingCode(code);
-    setPendingName("");
+    setPendingName(found);
+    setPendingCategory("");
+    setPendingTarget("new");
     setScanning(false);
   }
 
   async function confirmPending(e: React.FormEvent) {
     e.preventDefault();
-    if (!pendingCode || !pendingName.trim()) return;
+    if (!pendingCode) return;
     const code = pendingCode;
-    const nm = pendingName.trim();
-    setPendingCode(null);
-    setPendingName("");
-    await scanInventoryItem(familyId, code, nm);
-    setScanMsg(`Added ${nm}`);
+
+    if (pendingTarget === "new") {
+      if (!pendingName.trim()) return;
+      const nm = pendingName.trim();
+      setPendingCode(null);
+      await createScannedItem(familyId, code, nm, pendingCategory);
+      setScanMsg(`Added ${nm}`);
+    } else {
+      const target = items.find((i) => i.id === pendingTarget);
+      setPendingCode(null);
+      if (target) {
+        setItems((prev) =>
+          prev.map((i) =>
+            i.id === target.id ? { ...i, quantity: i.quantity + 1 } : i
+          )
+        );
+      }
+      await linkScanToItem(familyId, code, pendingTarget);
+      setScanMsg(target ? `+1 ${target.name}` : "Added to item");
+    }
   }
 
   async function changeQty(item: InventoryItem, delta: number) {
@@ -229,32 +285,66 @@ export default function InventoryList({
         {pendingCode && (
           <form
             onSubmit={confirmPending}
-            className="mt-2 flex gap-2 items-center"
+            className="mt-2 bg-white rounded-lg border border-sky-200 p-3 space-y-2"
           >
-            <span className="text-xs text-gray-500 shrink-0">
-              New item · {pendingCode}
-            </span>
-            <input
-              value={pendingName}
-              onChange={(e) => setPendingName(e.target.value)}
-              placeholder="What is it?"
-              autoFocus
-              className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
-            />
-            <button
-              type="submit"
-              disabled={!pendingName.trim()}
-              className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-medium px-3 py-1.5 rounded-lg text-sm"
+            <p className="text-xs text-gray-500">
+              Scanned barcode{" "}
+              <span className="font-mono">{pendingCode}</span>
+            </p>
+            <select
+              value={pendingTarget}
+              onChange={(e) => setPendingTarget(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500 text-gray-700"
             >
-              Add
-            </button>
-            <button
-              type="button"
-              onClick={() => setPendingCode(null)}
-              className="text-sm text-gray-400 hover:text-gray-700"
-            >
-              Cancel
-            </button>
+              <option value="new">➕ Add as a new item</option>
+              {[...items]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((i) => (
+                  <option key={i.id} value={i.id}>
+                    Add to: {i.name} (have {i.quantity})
+                  </option>
+                ))}
+            </select>
+
+            {pendingTarget === "new" ? (
+              <div className="flex gap-2">
+                <input
+                  value={pendingName}
+                  onChange={(e) => setPendingName(e.target.value)}
+                  placeholder="Item name (e.g. Green beans)"
+                  autoFocus
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                />
+                <input
+                  value={pendingCategory}
+                  onChange={(e) => setPendingCategory(e.target.value)}
+                  placeholder="Category"
+                  className="w-28 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">
+                This brand&apos;s barcode will be remembered, so future scans add
+                straight to that item.
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={pendingTarget === "new" && !pendingName.trim()}
+                className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-medium px-4 py-1.5 rounded-lg text-sm"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingCode(null)}
+                className="text-sm text-gray-400 hover:text-gray-700 px-2"
+              >
+                Cancel
+              </button>
+            </div>
           </form>
         )}
         <p className="text-xs text-gray-400 mt-1">
