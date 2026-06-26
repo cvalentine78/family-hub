@@ -117,13 +117,13 @@ export default function ShoppingList({
 
   return (
     <div>
-      <form onSubmit={handleAdd} className="flex gap-2 mb-4">
+      <form onSubmit={handleAdd} className="flex flex-wrap gap-2 mb-4">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Add an item…"
           list="grocery-suggestions"
-          className="flex-1 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          className="w-full sm:w-auto sm:flex-1 min-w-0 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
         <datalist id="grocery-suggestions">
           {suggestions.map((s) => (
@@ -152,7 +152,7 @@ export default function ShoppingList({
         <button
           type="submit"
           disabled={!name.trim()}
-          className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 rounded-lg"
+          className="flex-1 sm:flex-none bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 py-2 rounded-lg"
         >
           Add
         </button>

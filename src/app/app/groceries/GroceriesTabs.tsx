@@ -64,12 +64,12 @@ export default function GroceriesTabs({
   ).sort((a, b) => a.localeCompare(b));
 
   const tabClass = (active: boolean) =>
-    `flex-1 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+    `flex-1 min-w-0 px-1 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
       active ? "bg-white shadow text-sky-700" : "text-gray-500"
     }`;
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 sm:p-5 overflow-hidden">
       <div className="flex rounded-lg bg-gray-100 p-1 mb-5 w-full max-w-xl">
         <button onClick={() => setTab("list")} className={tabClass(tab === "list")}>
           🛒 Shopping
