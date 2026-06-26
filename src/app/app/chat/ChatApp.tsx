@@ -339,7 +339,7 @@ export default function ChatApp({
           <button
             type="button"
             onClick={() => setShowEmoji((s) => !s)}
-            className="text-2xl leading-none px-1 text-gray-500 hover:text-gray-700"
+            className="shrink-0 text-2xl leading-none px-1 text-gray-500 hover:text-gray-700"
             aria-label="Emoji"
           >
             😊
@@ -349,12 +349,12 @@ export default function ChatApp({
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={`Message ${headerTitle}…`}
-            className="flex-1 rounded-full border-2 border-gray-300 bg-gray-50 px-4 py-2 text-gray-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-500"
+            className="flex-1 min-w-0 rounded-full border-2 border-gray-300 bg-gray-50 px-4 py-2 text-gray-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-500"
           />
           <button
             type="submit"
             disabled={!text.trim() || sending}
-            className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 py-2 rounded-full"
+            className="shrink-0 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 py-2 rounded-full"
           >
             Send
           </button>
