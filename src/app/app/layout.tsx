@@ -8,6 +8,7 @@ import {
 } from "@/lib/family";
 import SignOutButton from "./SignOutButton";
 import LocationSharer from "./LocationSharer";
+import NativeLocationSharer from "./NativeLocationSharer";
 
 export default async function AppLayout({
   children,
@@ -37,11 +38,18 @@ export default async function AppLayout({
         </div>
       </header>
       {family && (
-        <LocationSharer
-          enabled={shareLocation}
-          familyId={family.id}
-          userId={user.id}
-        />
+        <>
+          <LocationSharer
+            enabled={shareLocation}
+            familyId={family.id}
+            userId={user.id}
+          />
+          <NativeLocationSharer
+            enabled={shareLocation}
+            familyId={family.id}
+            userId={user.id}
+          />
+        </>
       )}
       {children}
     </div>

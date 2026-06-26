@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Capacitor } from "@capacitor/core";
 import { createClient } from "@/lib/supabase/client";
 
 // Invisible component: when `enabled`, continuously shares the current
@@ -17,6 +18,9 @@ export default function LocationSharer({
   const watchId = useRef<number | null>(null);
 
   useEffect(() => {
+    // On the native Android shell, NativeLocationSharer's background service
+    // handles this — don't double-report from the foreground web watcher.
+    if (Capacitor.isNativePlatform()) return;
     if (!enabled || !navigator.geolocation) return;
 
     const supabase = createClient();
