@@ -152,9 +152,6 @@ export default async function DashboardPage() {
           accent="bg-amber-50"
         >
           <p className="text-sm text-gray-400">See where everyone is</p>
-          <span className="inline-block mt-2 text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
-            Coming soon
-          </span>
         </DashboardCard>
       </div>
     </div>
