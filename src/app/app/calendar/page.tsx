@@ -30,8 +30,8 @@ export default async function CalendarPage() {
   const members: Member[] = await getFamilyMembers(family.id);
 
   return (
-    <div className="max-w-[1320px] mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-4">
+    <div className="max-w-[1320px] mx-auto px-2 sm:px-4 py-6">
+      <div className="flex items-center justify-between mb-4 px-2 sm:px-0">
         <div>
           <h1 className="text-xl font-bold text-gray-800">{family.name}</h1>
           <p className="text-sm text-gray-500">Shared family calendar</p>
@@ -39,17 +39,18 @@ export default async function CalendarPage() {
         <Nav />
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6 items-start">
-        <aside className="w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-6">
+      <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 items-start">
+        {/* Calendar first on mobile; sidebar to the left on desktop. */}
+        <div className="order-1 lg:order-2 flex-1 min-w-0 w-full">
+          <Calendar familyId={family.id} events={events} />
+        </div>
+        <aside className="order-2 lg:order-1 w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-6">
           <OnlineMembers
             familyId={family.id}
             members={members}
             currentUserId={user.id}
           />
         </aside>
-        <div className="flex-1 min-w-0">
-          <Calendar familyId={family.id} events={events} />
-        </div>
       </div>
     </div>
   );
