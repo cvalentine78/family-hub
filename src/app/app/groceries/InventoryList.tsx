@@ -417,7 +417,7 @@ export default function InventoryList({
             placeholder="📷 Scan or type a barcode…"
             inputMode="numeric"
             autoComplete="off"
-            className="flex-1 min-w-0 basis-full sm:basis-auto rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+            className="w-full sm:w-auto sm:flex-1 min-w-0 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
           />
           <button
             type="button"
@@ -560,7 +560,7 @@ export default function InventoryList({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Add an item…"
-          className="flex-1 min-w-0 basis-full sm:basis-auto rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          className="w-full sm:w-auto sm:flex-1 min-w-0 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
         <label className="flex items-center gap-1 text-xs text-gray-400">
           Qty
