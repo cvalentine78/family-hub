@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import {
   addInventoryItem,
@@ -8,7 +9,11 @@ import {
   updateInventoryThreshold,
   deleteInventoryItem,
   addInventoryToGrocery,
+  scanInventoryItem,
 } from "../actions";
+
+// Camera scanner is only loaded when the user opens it.
+const BarcodeScanner = dynamic(() => import("./BarcodeScanner"), { ssr: false });
 
 export type InventoryItem = {
   id: string;
@@ -16,8 +21,28 @@ export type InventoryItem = {
   quantity: number;
   category: string | null;
   threshold: number;
+  barcode: string | null;
   created_at: string;
 };
+
+// Look up a product name from its barcode via Open Food Facts (free, no key).
+async function lookupProduct(code: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands`
+    );
+    const data = await res.json();
+    if (data.status === 1 && data.product) {
+      const p = data.product;
+      const name = (p.product_name || "").trim();
+      const brand = (p.brands || "").split(",")[0]?.trim();
+      if (name) return brand && !name.includes(brand) ? `${brand} ${name}` : name;
+    }
+  } catch {
+    // network/lookup failure — caller falls back to manual naming
+  }
+  return "";
+}
 
 export default function InventoryList({
   familyId,
@@ -30,6 +55,14 @@ export default function InventoryList({
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
+
+  // Barcode scanning state.
+  const [scanInput, setScanInput] = useState("");
+  const [scanMsg, setScanMsg] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const [pendingCode, setPendingCode] = useState<string | null>(null);
+  const [pendingName, setPendingName] = useState("");
 
   useEffect(() => {
     const supabase = createClient();
@@ -73,6 +106,49 @@ export default function InventoryList({
     await addInventoryItem(familyId, n, 1, c);
   }
 
+  // Handle a scanned/entered barcode.
+  async function handleScan(rawCode: string) {
+    const code = rawCode.trim();
+    if (!code) return;
+    setScanInput("");
+    setScanning(true);
+    setScanMsg(null);
+
+    // Already in inventory? Just bump it.
+    const existing = items.find((i) => i.barcode === code);
+    if (existing) {
+      await scanInventoryItem(familyId, code, "");
+      setScanMsg(`+1 ${existing.name}`);
+      setScanning(false);
+      return;
+    }
+
+    // Look the product up by barcode.
+    const found = await lookupProduct(code);
+    if (found) {
+      await scanInventoryItem(familyId, code, found);
+      setScanMsg(`Added ${found}`);
+      setScanning(false);
+      return;
+    }
+
+    // Unknown barcode — ask the user to name it.
+    setPendingCode(code);
+    setPendingName("");
+    setScanning(false);
+  }
+
+  async function confirmPending(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pendingCode || !pendingName.trim()) return;
+    const code = pendingCode;
+    const nm = pendingName.trim();
+    setPendingCode(null);
+    setPendingName("");
+    await scanInventoryItem(familyId, code, nm);
+    setScanMsg(`Added ${nm}`);
+  }
+
   async function changeQty(item: InventoryItem, delta: number) {
     const next = Math.max(0, item.quantity + delta);
     setItems((prev) =>
@@ -114,6 +190,89 @@ export default function InventoryList({
 
   return (
     <div>
+      {/* Barcode scanning */}
+      <div className="bg-sky-50 border border-sky-100 rounded-xl p-3 mb-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleScan(scanInput);
+          }}
+          className="flex gap-2"
+        >
+          <input
+            value={scanInput}
+            onChange={(e) => setScanInput(e.target.value)}
+            placeholder="📷 Scan or type a barcode…"
+            inputMode="numeric"
+            autoComplete="off"
+            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          />
+          <button
+            type="button"
+            onClick={() => setShowCamera(true)}
+            className="px-3 rounded-lg bg-white border border-sky-200 text-sky-700 hover:bg-sky-100 text-sm font-medium"
+            title="Scan with camera"
+          >
+            📷 Camera
+          </button>
+          <button
+            type="submit"
+            disabled={!scanInput.trim() || scanning}
+            className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 rounded-lg"
+          >
+            {scanning ? "…" : "Scan"}
+          </button>
+        </form>
+
+        {scanMsg && <p className="text-sm text-green-600 mt-2">{scanMsg} ✓</p>}
+
+        {pendingCode && (
+          <form
+            onSubmit={confirmPending}
+            className="mt-2 flex gap-2 items-center"
+          >
+            <span className="text-xs text-gray-500 shrink-0">
+              New item · {pendingCode}
+            </span>
+            <input
+              value={pendingName}
+              onChange={(e) => setPendingName(e.target.value)}
+              placeholder="What is it?"
+              autoFocus
+              className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+            />
+            <button
+              type="submit"
+              disabled={!pendingName.trim()}
+              className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-medium px-3 py-1.5 rounded-lg text-sm"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => setPendingCode(null)}
+              className="text-sm text-gray-400 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+        <p className="text-xs text-gray-400 mt-1">
+          Use a handheld scanner (it types the code and presses enter) or the
+          camera. Repeat scans add to the quantity.
+        </p>
+      </div>
+
+      {showCamera && (
+        <BarcodeScanner
+          onDetected={(code) => {
+            setShowCamera(false);
+            handleScan(code);
+          }}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
+
       <form onSubmit={handleAdd} className="flex gap-2 mb-4">
         <input
           value={name}

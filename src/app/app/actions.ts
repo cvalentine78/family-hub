@@ -349,6 +349,53 @@ export async function updateInventoryQuantity(id: string, quantity: number) {
   return { success: true };
 }
 
+// Scan flow: if an item with this barcode already exists, bump its quantity;
+// otherwise create a new inventory item carrying the barcode.
+export async function scanInventoryItem(
+  familyId: string,
+  barcode: string,
+  name: string
+) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const code = barcode.trim();
+  if (code) {
+    const { data: existing } = await supabase
+      .from("inventory_items")
+      .select("id, quantity")
+      .eq("family_id", familyId)
+      .eq("barcode", code)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from("inventory_items")
+        .update({
+          quantity: existing.quantity + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id);
+      return { success: true, incremented: true };
+    }
+  }
+
+  const text = name.trim();
+  if (!text) return { error: "Enter a name." };
+
+  const { error } = await supabase.from("inventory_items").insert({
+    family_id: familyId,
+    name: text,
+    quantity: 1,
+    barcode: code || null,
+  });
+  if (error) return { error: error.message };
+  return { success: true, incremented: false };
+}
+
 export async function updateInventoryThreshold(id: string, threshold: number) {
   const supabase = await createClient();
   const {

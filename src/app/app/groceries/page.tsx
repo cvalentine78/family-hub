@@ -31,7 +31,7 @@ export default async function GroceriesPage() {
 
   const { data: inventory } = await supabase
     .from("inventory_items")
-    .select("id, name, quantity, category, threshold, created_at")
+    .select("id, name, quantity, category, threshold, barcode, created_at")
     .eq("family_id", family.id);
 
   const { data: dishes } = await supabase
