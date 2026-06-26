@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { Browser } from "@capacitor/browser";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -12,6 +14,27 @@ export default function LoginPage() {
     setError(null);
 
     const supabase = createClient();
+
+    // Native: open Google in an in-app browser tab and return via deep link
+    // (NativeAuthHandler finishes the login inside the app's webview).
+    if (Capacitor.isNativePlatform()) {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: "com.valentine.familyhub://auth/callback",
+          skipBrowserRedirect: true,
+        },
+      });
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+        return;
+      }
+      if (data?.url) await Browser.open({ url: data.url });
+      return;
+    }
+
+    // Web: standard redirect flow.
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
