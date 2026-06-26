@@ -40,6 +40,28 @@ function combineSize(amount: string, unit: string) {
   return [amount.trim(), unit].filter(Boolean).join(" ");
 }
 
+const DEFAULT_CATEGORIES = [
+  "Pantry",
+  "Fridge",
+  "Freezer",
+  "Produce",
+  "Meat & Seafood",
+  "Dairy",
+  "Bakery",
+  "Snacks",
+  "Beverages",
+  "Condiments",
+  "Baking",
+  "Canned goods",
+  "Cleaning",
+  "Paper goods",
+  "Toiletries",
+  "Health",
+  "Baby",
+  "Pet",
+  "Other",
+];
+
 // Camera scanner is only loaded when the user opens it.
 const BarcodeScanner = dynamic(() => import("./BarcodeScanner"), { ssr: false });
 
@@ -85,10 +107,15 @@ export default function InventoryList({
   const [items, setItems] = useState<InventoryItem[]>(initialItems);
   const [aliases, setAliases] = useState<BarcodeAlias[]>(initialAliases);
   const [name, setName] = useState("");
+  const [qty, setQty] = useState("1");
   const [sizeAmt, setSizeAmt] = useState("");
   const [sizeUnit, setSizeUnit] = useState("");
   const [category, setCategory] = useState("");
   const [addedMsg, setAddedMsg] = useState<string | null>(null);
+
+  // Search + category filter for browsing inventory.
+  const [search, setSearch] = useState("");
+  const [filterCategory, setFilterCategory] = useState("");
 
   // Barcode scanning state.
   const [scanInput, setScanInput] = useState("");
@@ -172,11 +199,13 @@ export default function InventoryList({
     const n = name;
     const c = category;
     const s = combineSize(sizeAmt, sizeUnit);
+    const q = Math.max(1, parseInt(qty) || 1);
     setName("");
+    setQty("1");
     setSizeAmt("");
     setSizeUnit("");
     setCategory("");
-    await addInventoryItem(familyId, n, 1, c, s);
+    await addInventoryItem(familyId, n, q, c, s);
   }
 
   // Handle a scanned/entered barcode.
@@ -273,9 +302,30 @@ export default function InventoryList({
     setTimeout(() => setAddedMsg(null), 2500);
   }
 
-  // Group by category.
+  // Category suggestions = defaults + whatever's already used.
+  const usedCategories = Array.from(
+    new Set(items.map((i) => i.category?.trim()).filter(Boolean) as string[])
+  );
+  const categoryOptions = Array.from(
+    new Set([...DEFAULT_CATEGORIES, ...usedCategories])
+  ).sort((a, b) => a.localeCompare(b));
+
+  // Filter by search + selected category, then group by category.
+  const term = search.trim().toLowerCase();
+  const filtered = items.filter((i) => {
+    const cat = i.category?.trim() || "Uncategorized";
+    if (filterCategory && cat !== filterCategory) return false;
+    if (
+      term &&
+      !i.name.toLowerCase().includes(term) &&
+      !(i.size || "").toLowerCase().includes(term)
+    )
+      return false;
+    return true;
+  });
+
   const groups = new Map<string, InventoryItem[]>();
-  for (const item of items) {
+  for (const item of filtered) {
     const key = item.category?.trim() || "Uncategorized";
     const list = groups.get(key) ?? [];
     list.push(item);
@@ -294,7 +344,7 @@ export default function InventoryList({
             e.preventDefault();
             handleScan(scanInput);
           }}
-          className="flex gap-2"
+          className="flex flex-wrap gap-2"
         >
           <input
             value={scanInput}
@@ -302,12 +352,12 @@ export default function InventoryList({
             placeholder="📷 Scan or type a barcode…"
             inputMode="numeric"
             autoComplete="off"
-            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+            className="flex-1 min-w-0 basis-full sm:basis-auto rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
           />
           <button
             type="button"
             onClick={() => setShowCamera(true)}
-            className="px-3 rounded-lg bg-white border border-sky-200 text-sky-700 hover:bg-sky-100 text-sm font-medium"
+            className="flex-1 sm:flex-none px-3 py-2 rounded-lg bg-white border border-sky-200 text-sky-700 hover:bg-sky-100 text-sm font-medium"
             title="Scan with camera"
           >
             📷 Camera
@@ -315,7 +365,7 @@ export default function InventoryList({
           <button
             type="submit"
             disabled={!scanInput.trim() || scanning}
-            className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 rounded-lg"
+            className="flex-1 sm:flex-none bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 py-2 rounded-lg"
           >
             {scanning ? "…" : "Scan"}
           </button>
@@ -379,7 +429,8 @@ export default function InventoryList({
                   value={pendingCategory}
                   onChange={(e) => setPendingCategory(e.target.value)}
                   placeholder="Category"
-                  className="w-24 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                  list="category-options"
+                  className="w-28 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
                 />
               </div>
             ) : (
@@ -423,13 +474,29 @@ export default function InventoryList({
         />
       )}
 
-      <form onSubmit={handleAdd} className="flex gap-2 mb-4">
+      {/* Category options for the dropdowns */}
+      <datalist id="category-options">
+        {categoryOptions.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
+
+      <form onSubmit={handleAdd} className="flex flex-wrap gap-2 mb-4">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Add an item…"
-          className="flex-1 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          className="flex-1 min-w-0 basis-full sm:basis-auto rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
+        <label className="flex items-center gap-1 text-xs text-gray-400">
+          Qty
+          <input
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            inputMode="numeric"
+            className="w-14 rounded-lg border border-gray-300 px-2 py-2 text-center text-gray-900 outline-none focus:border-sky-500"
+          />
+        </label>
         <input
           value={sizeAmt}
           onChange={(e) => setSizeAmt(e.target.value)}
@@ -453,16 +520,46 @@ export default function InventoryList({
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           placeholder="Category"
-          className="w-28 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          list="category-options"
+          className="flex-1 min-w-[110px] rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
         />
         <button
           type="submit"
           disabled={!name.trim()}
-          className="bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 rounded-lg"
+          className="flex-1 sm:flex-none bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold px-4 py-2 rounded-lg"
         >
           Add
         </button>
       </form>
+
+      {/* Search + category filter */}
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="🔍 Search inventory…"
+            className="flex-1 min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-sky-500"
+          />
+          <select
+            value={filterCategory}
+            onChange={(e) => setFilterCategory(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-sky-500 text-gray-700"
+          >
+            <option value="">All categories</option>
+            {usedCategories
+              .sort((a, b) => a.localeCompare(b))
+              .map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            {items.some((i) => !i.category?.trim()) && (
+              <option value="Uncategorized">Uncategorized</option>
+            )}
+          </select>
+        </div>
+      )}
 
       {addedMsg && (
         <p className="text-sm text-green-600 mb-3">{addedMsg} ✓</p>
@@ -471,6 +568,10 @@ export default function InventoryList({
       {items.length === 0 ? (
         <p className="text-center text-gray-400 py-10">
           Your inventory is empty. Track what you have at home! 📦
+        </p>
+      ) : filtered.length === 0 ? (
+        <p className="text-center text-gray-400 py-10">
+          Nothing matches your search or filter.
         </p>
       ) : (
         <div className="space-y-5">
