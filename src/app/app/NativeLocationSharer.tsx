@@ -55,6 +55,11 @@ export default function NativeLocationSharer({
     let watcherId: string | null = null;
     let cancelled = false;
 
+    // TEMP diagnostics — remove once native location is confirmed working.
+    function dbg(msg: string) {
+      supabase.from("debug_log").insert({ user_id: userId, msg });
+    }
+
     function record(loc: BgLocation) {
       const recordedAt = new Date(loc.time ?? Date.now()).toISOString();
 
@@ -79,29 +84,40 @@ export default function NativeLocationSharer({
       });
     }
 
+    dbg(`watcher setup: family=${familyId}`);
+
     BackgroundGeolocation.addWatcher(
       {
         backgroundTitle: "Family Hub",
         backgroundMessage: "Sharing your location with your family.",
         requestPermissions: true,
         stale: false,
-        distanceFilter: 25, // meters of movement before a new fix
+        distanceFilter: 10, // meters of movement before a new fix
       },
       (location, error) => {
         if (error) {
+          dbg(`watcher error: ${error.code} / ${error.message}`);
           // User denied the permission — send them to settings to fix it.
           if (error.code === "NOT_AUTHORIZED") BackgroundGeolocation.openSettings();
           return;
         }
-        if (location) record(location);
+        if (location) {
+          dbg(
+            `fix: ${location.latitude.toFixed(5)},${location.longitude.toFixed(5)} acc=${location.accuracy}`
+          );
+          record(location);
+        }
       }
-    ).then((id) => {
-      if (cancelled) {
-        BackgroundGeolocation.removeWatcher({ id });
-      } else {
-        watcherId = id;
-      }
-    });
+    )
+      .then((id) => {
+        dbg(`watcher added: ${id}`);
+        if (cancelled) {
+          BackgroundGeolocation.removeWatcher({ id });
+        } else {
+          watcherId = id;
+        }
+      })
+      .catch((e) => dbg(`addWatcher threw: ${String(e)}`));
 
     return () => {
       cancelled = true;
