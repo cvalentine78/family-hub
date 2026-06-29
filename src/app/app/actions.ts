@@ -56,21 +56,41 @@ export async function createEvent(formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not signed in." };
 
-  const { error } = await supabase.from("events").insert({
-    family_id,
-    title,
-    description: description || null,
-    location: location || null,
-    all_day,
-    starts_at: new Date(starts_at).toISOString(),
-    ends_at: new Date(ends_at || starts_at).toISOString(),
-    recurrence: validRecurrence.includes(recurrence) ? recurrence : "none",
-    recurrence_until:
-      recurrence !== "none" && recurrence_until ? recurrence_until : null,
-    created_by: user.id,
-  });
+  const { data: created, error } = await supabase
+    .from("events")
+    .insert({
+      family_id,
+      title,
+      description: description || null,
+      location: location || null,
+      all_day,
+      starts_at: new Date(starts_at).toISOString(),
+      ends_at: new Date(ends_at || starts_at).toISOString(),
+      recurrence: validRecurrence.includes(recurrence) ? recurrence : "none",
+      recurrence_until:
+        recurrence !== "none" && recurrence_until ? recurrence_until : null,
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
 
   if (error) return { error: error.message };
+
+  // Reminders (shared across the family). Submitted as repeated "reminders"
+  // fields holding minutes-before values; the dispatcher fires them.
+  const reminders = [
+    ...new Set(
+      formData
+        .getAll("reminders")
+        .map((v) => parseInt(String(v), 10))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n <= 40320) // <= 4 weeks
+    ),
+  ];
+  if (created && reminders.length) {
+    await supabase
+      .from("event_reminders")
+      .insert(reminders.map((m) => ({ event_id: created.id, minutes_before: m })));
+  }
 
   revalidatePath("/app");
   return { success: true };

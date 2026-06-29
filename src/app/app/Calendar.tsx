@@ -18,6 +18,19 @@ export type EventRow = {
 
 type View = "day" | "week" | "month";
 
+// Reminder lead times (minutes before the event), Google-Calendar style.
+const REMINDER_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: "At time of event" },
+  { value: 5, label: "5 minutes before" },
+  { value: 10, label: "10 minutes before" },
+  { value: 15, label: "15 minutes before" },
+  { value: 30, label: "30 minutes before" },
+  { value: 60, label: "1 hour before" },
+  { value: 120, label: "2 hours before" },
+  { value: 1440, label: "1 day before" },
+  { value: 10080, label: "1 week before" },
+];
+
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -189,6 +202,13 @@ export default function Calendar({
   function AddEventForm({ day }: { day: Date }) {
     const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0);
     const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 10, 0);
+    // Shared reminders for this event; default one at 30 min before.
+    const [reminders, setReminders] = useState<number[]>([30]);
+    function addReminder() {
+      const used = new Set(reminders);
+      const next = REMINDER_OPTIONS.find((o) => !used.has(o.value));
+      if (next) setReminders([...reminders, next.value]);
+    }
     return (
       <form
         action={handleCreate}
@@ -260,6 +280,49 @@ export default function Calendar({
               className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-sky-500"
             />
           </label>
+        </div>
+        <div className="space-y-1.5">
+          <span className="text-xs text-gray-500">🔔 Reminders</span>
+          {reminders.length === 0 && (
+            <p className="text-xs text-gray-400">No reminders.</p>
+          )}
+          {reminders.map((value, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select
+                name="reminders"
+                value={value}
+                onChange={(e) => {
+                  const next = [...reminders];
+                  next[i] = Number(e.target.value);
+                  setReminders(next);
+                }}
+                className="flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-sky-500 text-gray-700"
+              >
+                {REMINDER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setReminders(reminders.filter((_, j) => j !== i))}
+                className="text-gray-400 hover:text-red-500 px-1 text-lg leading-none"
+                title="Remove reminder"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          {reminders.length < REMINDER_OPTIONS.length && (
+            <button
+              type="button"
+              onClick={addReminder}
+              className="text-sm text-sky-600 hover:underline"
+            >
+              + Add a reminder
+            </button>
+          )}
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <div className="flex gap-2">
