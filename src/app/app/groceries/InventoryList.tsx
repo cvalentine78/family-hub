@@ -157,6 +157,12 @@ export default function InventoryList({
   const [scanInput, setScanInput] = useState("");
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  // Last auto +1 from a known-barcode scan, so it can be undone or edited.
+  const [lastBump, setLastBump] = useState<{
+    itemId: string;
+    name: string;
+    prevQty: number;
+  } | null>(null);
   const [showCamera, setShowCamera] = useState(false);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [pendingName, setPendingName] = useState("");
@@ -252,6 +258,7 @@ export default function InventoryList({
     setScanInput("");
     setScanning(true);
     setScanMsg(null);
+    setLastBump(null);
 
     // Known barcode (any brand mapped to an item)? Just bump that item.
     const alias = aliases.find((a) => a.barcode === code);
@@ -263,7 +270,12 @@ export default function InventoryList({
         )
       );
       await updateInventoryQuantity(existing.id, existing.quantity + 1);
-      setScanMsg(`+1 ${existing.name}`);
+      // Surface an undo/edit affordance for the auto +1.
+      setLastBump({
+        itemId: existing.id,
+        name: existing.name,
+        prevQty: existing.quantity,
+      });
       setScanning(false);
       return;
     }
@@ -281,9 +293,33 @@ export default function InventoryList({
     setScanning(false);
   }
 
+  // Revert the most recent auto +1 from a known-barcode scan.
+  async function undoBump() {
+    if (!lastBump) return;
+    const { itemId, prevQty } = lastBump;
+    setItems((prev) =>
+      prev.map((i) => (i.id === itemId ? { ...i, quantity: prevQty } : i))
+    );
+    setLastBump(null);
+    await updateInventoryQuantity(itemId, prevQty);
+  }
+
+  // Open the just-bumped item in its inline editor (clear filters so it shows).
+  function editBumped() {
+    if (!lastBump) return;
+    const item = items.find((i) => i.id === lastBump.itemId);
+    setLastBump(null);
+    if (item) {
+      setSearch("");
+      setFilterCategory("");
+      startEdit(item);
+    }
+  }
+
   async function confirmPending(e: React.FormEvent) {
     e.preventDefault();
     if (!pendingCode) return;
+    setLastBump(null);
     const code = pendingCode;
 
     if (pendingTarget === "new") {
@@ -437,6 +473,25 @@ export default function InventoryList({
         </form>
 
         {scanMsg && <p className="text-sm text-green-600 mt-2">{scanMsg} ✓</p>}
+        {lastBump && (
+          <div className="flex items-center gap-3 mt-2 text-sm">
+            <span className="text-green-600">+1 {lastBump.name} ✓</span>
+            <button
+              type="button"
+              onClick={undoBump}
+              className="text-sky-600 hover:underline font-medium"
+            >
+              Undo
+            </button>
+            <button
+              type="button"
+              onClick={editBumped}
+              className="text-sky-600 hover:underline font-medium"
+            >
+              Edit
+            </button>
+          </div>
+        )}
 
         {pendingCode && (
           <form
