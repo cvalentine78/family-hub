@@ -55,36 +55,36 @@ export default function NativeLocationSharer({
     let watcherId: string | null = null;
     let cancelled = false;
 
-    // TEMP diagnostics — remove once native location is confirmed working.
-    function dbg(msg: string) {
-      supabase.from("debug_log").insert({ user_id: userId, msg });
-    }
-
-    function record(loc: BgLocation) {
+    async function record(loc: BgLocation) {
       const recordedAt = new Date(loc.time ?? Date.now()).toISOString();
 
-      // Current position (single row per user, drives the live map).
-      supabase.from("locations").upsert({
-        user_id: userId,
-        family_id: familyId,
-        lat: loc.latitude,
-        lng: loc.longitude,
-        accuracy: loc.accuracy,
-        updated_at: recordedAt,
-      });
+      // Supabase query builders are lazy PromiseLikes — the request is only
+      // sent when the builder is awaited (or .then()'d). These MUST be awaited
+      // or the writes never leave the device.
+      const [current, breadcrumb] = await Promise.all([
+        // Current position (single row per user, drives the live map).
+        supabase.from("locations").upsert({
+          user_id: userId,
+          family_id: familyId,
+          lat: loc.latitude,
+          lng: loc.longitude,
+          accuracy: loc.accuracy,
+          updated_at: recordedAt,
+        }),
+        // Append-only breadcrumb (drives the trail / timeline view).
+        supabase.from("location_history").insert({
+          user_id: userId,
+          family_id: familyId,
+          lat: loc.latitude,
+          lng: loc.longitude,
+          accuracy: loc.accuracy,
+          recorded_at: recordedAt,
+        }),
+      ]);
 
-      // Append-only breadcrumb (drives the trail / timeline view).
-      supabase.from("location_history").insert({
-        user_id: userId,
-        family_id: familyId,
-        lat: loc.latitude,
-        lng: loc.longitude,
-        accuracy: loc.accuracy,
-        recorded_at: recordedAt,
-      });
+      if (current.error) console.error("locations upsert failed:", current.error.message);
+      if (breadcrumb.error) console.error("location_history insert failed:", breadcrumb.error.message);
     }
-
-    dbg(`watcher setup: family=${familyId}`);
 
     BackgroundGeolocation.addWatcher(
       {
@@ -96,28 +96,24 @@ export default function NativeLocationSharer({
       },
       (location, error) => {
         if (error) {
-          dbg(`watcher error: ${error.code} / ${error.message}`);
+          console.error("BackgroundGeolocation watcher error:", error.code, error.message);
           // User denied the permission — send them to settings to fix it.
           if (error.code === "NOT_AUTHORIZED") BackgroundGeolocation.openSettings();
           return;
         }
         if (location) {
-          dbg(
-            `fix: ${location.latitude.toFixed(5)},${location.longitude.toFixed(5)} acc=${location.accuracy}`
-          );
-          record(location);
+          void record(location);
         }
       }
     )
       .then((id) => {
-        dbg(`watcher added: ${id}`);
         if (cancelled) {
           BackgroundGeolocation.removeWatcher({ id });
         } else {
           watcherId = id;
         }
       })
-      .catch((e) => dbg(`addWatcher threw: ${String(e)}`));
+      .catch((e) => console.error("addWatcher failed:", e));
 
     return () => {
       cancelled = true;
