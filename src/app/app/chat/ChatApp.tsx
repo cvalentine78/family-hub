@@ -82,6 +82,9 @@ export default function ChatApp({
   const [text, setText] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const [sending, setSending] = useState(false);
+  // Mobile: the conversation list collapses so it doesn't push the messages
+  // offscreen. On desktop the sidebar is always shown (lg:block below).
+  const [listOpen, setListOpen] = useState(false);
   const [reads, setReads] = useState<Read[]>([]);
   // Seed unread badges from the server, but never for the conversation we open on.
   const [groupUnread, setGroupUnread] = useState(
@@ -296,6 +299,7 @@ export default function ChatApp({
 
   function selectGroup() {
     setGroupUnread(false);
+    setListOpen(false);
     setSelected({ type: "group", id: groupConversationId });
   }
 
@@ -305,6 +309,7 @@ export default function ChatApp({
       next.delete(otherId);
       return next;
     });
+    setListOpen(false);
     const result = await openDirectConversation(familyId, otherId);
     if (result?.conversationId) {
       convToOther.current.set(result.conversationId, otherId);
@@ -339,6 +344,8 @@ export default function ChatApp({
       ? "Family"
       : memberById.get(selected.otherId)?.display_name ?? "Member";
 
+  const anyUnread = groupUnread || directUnread.size > 0;
+
   // Index of the last message I sent — only this one shows a status line.
   let lastMineIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -370,6 +377,39 @@ export default function ChatApp({
     <div className="flex flex-col lg:flex-row gap-6 items-start">
       {/* Conversation list */}
       <aside className="w-full lg:w-64 lg:shrink-0 bg-white rounded-2xl border border-gray-100 shadow-sm p-2">
+        {/* Mobile-only collapsed bar: shows the open chat, tap to switch. */}
+        <button
+          onClick={() => setListOpen((o) => !o)}
+          className="lg:hidden w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50"
+          aria-expanded={listOpen}
+        >
+          {selected.type === "group" ? (
+            <div className="w-9 h-9 rounded-full bg-sky-100 flex items-center justify-center text-lg">
+              👨‍👩‍👧‍👦
+            </div>
+          ) : (
+            <Avatar
+              name={headerTitle}
+              url={memberById.get(selected.otherId)?.avatar_url ?? null}
+              size={36}
+            />
+          )}
+          <span className="flex-1 text-left font-medium text-gray-800 truncate">
+            {selected.type === "group" ? "Family" : headerTitle}
+          </span>
+          {anyUnread && !listOpen && (
+            <span className="w-2.5 h-2.5 rounded-full bg-sky-600 shrink-0" />
+          )}
+          <span
+            className={`shrink-0 text-gray-400 transition-transform ${
+              listOpen ? "rotate-180" : ""
+            }`}
+          >
+            ▾
+          </span>
+        </button>
+
+        <div className={`${listOpen ? "block" : "hidden"} lg:block`}>
         <button
           onClick={selectGroup}
           className={`w-full flex items-center gap-3 p-2 rounded-lg transition-colors ${
@@ -427,6 +467,7 @@ export default function ChatApp({
             </button>
           );
         })}
+        </div>
       </aside>
 
       {/* Conversation */}
