@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import { createClient } from "@/lib/supabase/client";
@@ -8,6 +9,8 @@ import { createClient } from "@/lib/supabase/client";
 // Native-only: registers this phone for push (FCM) and stores its token in
 // device_tokens so the server can target it. Renders nothing on the web.
 export default function NativePushRegistrar({ userId }: { userId: string }) {
+  const router = useRouter();
+
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
@@ -39,7 +42,18 @@ export default function NativePushRegistrar({ userId }: { userId: string }) {
           console.error("Push registration error:", err.error);
         }
       );
-      handles = [reg, regError];
+      // Tapping a notification deep-links into the right place. Chat pushes
+      // carry { type: 'chat', conversationId } — route to that conversation.
+      const tapped = await PushNotifications.addListener(
+        "pushNotificationActionPerformed",
+        (action) => {
+          const data = action.notification.data as Record<string, string> | undefined;
+          if (data?.type === "chat" && data.conversationId) {
+            router.push(`/app/chat?c=${data.conversationId}`);
+          }
+        }
+      );
+      handles = [reg, regError, tapped];
       if (cancelled) {
         handles.forEach((h) => h.remove());
         return;
@@ -60,7 +74,7 @@ export default function NativePushRegistrar({ userId }: { userId: string }) {
       cancelled = true;
       handles.forEach((h) => h.remove());
     };
-  }, [userId]);
+  }, [userId, router]);
 
   return null;
 }
