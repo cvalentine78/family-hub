@@ -50,6 +50,8 @@ export default function NativePushRegistrar({ userId }: { userId: string }) {
           const data = action.notification.data as Record<string, string> | undefined;
           if (data?.type === "chat" && data.conversationId) {
             router.push(`/app/chat?c=${data.conversationId}`);
+          } else if (data?.type === "location_stale") {
+            router.push("/app/map");
           }
         }
       );
