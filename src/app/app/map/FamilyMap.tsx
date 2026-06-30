@@ -547,9 +547,10 @@ function HistoryTrail({
           title={`Start · ${shortTime(start.recorded_at)}`}
         >
           <div className="flex flex-col items-center">
-            <div className="w-6 h-6 rounded-full bg-emerald-500 border-2 border-white shadow-md flex items-center justify-center text-white text-xs">
-              ▶
-            </div>
+            <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-white shadow-md" />
+            <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
+              Start · {shortTime(start.recorded_at)}
+            </span>
           </div>
         </AdvancedMarker>
       )}
