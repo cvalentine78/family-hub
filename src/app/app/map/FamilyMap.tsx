@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   APIProvider,
   Map as GoogleMap,
@@ -8,6 +8,7 @@ import {
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import type { Member } from "@/lib/family";
@@ -114,6 +115,20 @@ export default function FamilyMap({
   >("idle");
   const [statusMsg, setStatusMsg] = useState<string>("");
 
+  // Broadcast channel used to ask every family device that's open to report a
+  // fresh fix (see LocationRefreshResponder).
+  const requestChannel = useRef<RealtimeChannel | null>(null);
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase.channel(`locreq:${familyId}`);
+    channel.subscribe();
+    requestChannel.current = channel;
+    return () => {
+      supabase.removeChannel(channel);
+      requestChannel.current = null;
+    };
+  }, [familyId]);
+
   // History view state.
   const [mode, setMode] = useState<Mode>("live");
   const [historyUserId, setHistoryUserId] = useState<string>(currentUserId);
@@ -125,15 +140,24 @@ export default function FamilyMap({
 
   const memberById = new Map(members.map((m) => [m.user_id, m]));
 
-  // Grab one fresh fix and write it immediately — a reliable manual fallback.
+  // Update my own location now, and ask every other family device that's open
+  // to do the same. Devices that are closed/backgrounded can't respond — they
+  // keep updating on their own as the person moves.
   function updateNow() {
+    // Ask everyone else's open app to report a fresh fix.
+    requestChannel.current?.send({
+      type: "broadcast",
+      event: "refresh",
+      payload: { by: currentUserId },
+    });
+
     if (!navigator.geolocation) {
       setUpdateStatus("error");
       setStatusMsg("This device doesn't support location.");
       return;
     }
     setUpdateStatus("working");
-    setStatusMsg("Getting your location…");
+    setStatusMsg("Updating locations…");
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
@@ -151,7 +175,7 @@ export default function FamilyMap({
           setStatusMsg("Couldn't save location. Try again.");
         } else {
           setUpdateStatus("ok");
-          setStatusMsg("Your location is on the map ✓");
+          setStatusMsg("Updated. Asked the family to refresh too ✓");
         }
       },
       (err) => {
@@ -290,7 +314,7 @@ export default function FamilyMap({
               disabled={updateStatus === "working"}
               className="text-sm font-medium bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
             >
-              {updateStatus === "working" ? "Locating…" : "📍 Update my location"}
+              {updateStatus === "working" ? "Updating…" : "📍 Update everyone"}
             </button>
             <Link
               href={`/app/members/${currentUserId}`}

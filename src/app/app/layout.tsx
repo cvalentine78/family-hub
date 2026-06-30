@@ -9,6 +9,7 @@ import {
 import SignOutButton from "./SignOutButton";
 import LocationSharer from "./LocationSharer";
 import NativeLocationSharer from "./NativeLocationSharer";
+import LocationRefreshResponder from "./LocationRefreshResponder";
 import NativePushRegistrar from "./NativePushRegistrar";
 import Heartbeat from "./Heartbeat";
 import BottomNav from "./BottomNav";
@@ -48,6 +49,11 @@ export default async function AppLayout({
             userId={user.id}
           />
           <NativeLocationSharer
+            enabled={shareLocation}
+            familyId={family.id}
+            userId={user.id}
+          />
+          <LocationRefreshResponder
             enabled={shareLocation}
             familyId={family.id}
             userId={user.id}
