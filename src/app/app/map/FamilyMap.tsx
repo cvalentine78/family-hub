@@ -270,24 +270,20 @@ export default function FamilyMap({
     if (mode !== "history") return;
     let cancelled = false;
     const supabase = createClient();
+    // Server-side trail: drops imprecise fixes and thins to ~1000 points across
+    // the WHOLE window, so a full day isn't capped by PostgREST's 1000-row limit
+    // (which had been dropping either the morning or the recent travel).
     supabase
-      .from("location_history")
-      .select("lat, lng, recorded_at")
-      .eq("family_id", familyId)
-      .eq("user_id", historyUserId)
-      .gte("recorded_at", cutoffFor(range))
-      // Drop imprecise fixes so the trail doesn't show phantom jumps.
-      .or(`accuracy.is.null,accuracy.lte.${MAX_ACCURACY_M}`)
-      // Fetch newest-first so a long day isn't truncated to its OLDEST points
-      // (which hid recent travel and showed a stale "latest" position).
-      .order("recorded_at", { ascending: false })
-      .limit(5000)
+      .rpc("location_trail", {
+        p_user: historyUserId,
+        p_family: familyId,
+        p_since: cutoffFor(range),
+        p_max: 1000,
+      })
       .then(({ data, error }) => {
         if (cancelled) return;
-        if (error) console.error("location_history fetch failed:", error.message);
-        // Flip back to chronological order for drawing the trail.
-        const rows = ((data as Crumb[]) ?? []).slice().reverse();
-        setCrumbs(rows);
+        if (error) console.error("location_trail failed:", error.message);
+        setCrumbs((data as Crumb[]) ?? []);
         setLoadedKey(historyKey);
       });
     return () => {
