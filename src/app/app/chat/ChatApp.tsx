@@ -62,6 +62,7 @@ export default function ChatApp({
   initialMessages,
   initialGroupUnread,
   initialDirectUnread,
+  deepLinked,
 }: {
   familyId: string;
   currentUserId: string;
@@ -71,6 +72,7 @@ export default function ChatApp({
   initialMessages: Message[];
   initialGroupUnread: boolean;
   initialDirectUnread: string[];
+  deepLinked: boolean;
 }) {
   const [selected, setSelected] = useState<Selected>(() =>
     initialSelected.type === "direct" && initialSelected.otherId
@@ -82,17 +84,19 @@ export default function ChatApp({
   const [text, setText] = useState("");
   const [showEmoji, setShowEmoji] = useState(false);
   const [sending, setSending] = useState(false);
-  // Mobile: the conversation list collapses so it doesn't push the messages
-  // offscreen. On desktop the sidebar is always shown (lg:block below).
-  const [listOpen, setListOpen] = useState(false);
+  // Mobile is list-first: land on the conversation list and tap one to open it
+  // (listOpen = showing the list). A deep link from a notification opens
+  // straight into its conversation. On desktop both panels always show.
+  const [listOpen, setListOpen] = useState(!deepLinked);
   const [reads, setReads] = useState<Read[]>([]);
-  // Seed unread badges from the server, but never for the conversation we open on.
+  // Seed unread from the server. If we deep-linked straight into a conversation
+  // it's read on arrival; otherwise keep its badge until the user opens it.
   const [groupUnread, setGroupUnread] = useState(
-    initialSelected.type === "group" ? false : initialGroupUnread
+    deepLinked && initialSelected.type === "group" ? false : initialGroupUnread
   );
   const [directUnread, setDirectUnread] = useState<Set<string>>(() => {
     const s = new Set(initialDirectUnread);
-    if (initialSelected.type === "direct" && initialSelected.otherId) {
+    if (deepLinked && initialSelected.type === "direct" && initialSelected.otherId) {
       s.delete(initialSelected.otherId);
     }
     return s;
@@ -113,6 +117,12 @@ export default function ChatApp({
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
+  // Whether the messages panel is actually on screen (mobile hides it in list
+  // view). Read from subscriptions without re-subscribing.
+  const listOpenRef = useRef(listOpen);
+  useEffect(() => {
+    listOpenRef.current = listOpen;
+  }, [listOpen]);
   useEffect(() => {
     if (initialSelected.type === "direct" && initialSelected.otherId) {
       convToOther.current.set(initialSelected.id, initialSelected.otherId);
@@ -175,9 +185,6 @@ export default function ChatApp({
     }
     load();
     loadReads();
-    // Opening a conversation marks it read (the badge is cleared by the action
-    // that selected it, or by the initializers on first load).
-    void markRead(selected.id);
 
     const msgChannel = supabase
       .channel(`messages:${selected.id}`)
@@ -203,7 +210,11 @@ export default function ChatApp({
             );
             return [...withoutTemp, msg];
           });
-          if (msg.user_id !== currentUserId && document.visibilityState === "visible") {
+          if (
+            msg.user_id !== currentUserId &&
+            document.visibilityState === "visible" &&
+            !listOpenRef.current
+          ) {
             void markRead(selected.id);
           }
         }
@@ -230,10 +241,10 @@ export default function ChatApp({
       )
       .subscribe();
 
-    // Returning to the app while this conversation is open marks it read and
-    // clears any badge that landed while we were away.
+    // Returning to the app while actually viewing this conversation marks it
+    // read and clears any badge that landed while we were away.
     const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || listOpenRef.current) return;
       void markRead(selected.id);
       if (selected.type === "group") setGroupUnread(false);
       else if (selectedOtherId)
@@ -253,6 +264,13 @@ export default function ChatApp({
     };
   }, [selected.id, selected.type, selectedOtherId, currentUserId, markRead]);
 
+  // Mark the conversation read once it's actually on screen — i.e. not just the
+  // background selection while the mobile list is open.
+  useEffect(() => {
+    if (listOpen) return;
+    void markRead(selected.id);
+  }, [listOpen, selected.id, markRead]);
+
   // Global: any message in a conversation I'm in (RLS-scoped) flags an unread
   // badge unless it's the one I'm currently looking at.
   useEffect(() => {
@@ -265,8 +283,11 @@ export default function ChatApp({
         async (payload) => {
           const msg = payload.new as Message & { conversation_id: string };
           if (msg.user_id === currentUserId) return;
-          const isOpen = msg.conversation_id === selectedRef.current.id;
-          if (isOpen && document.visibilityState === "visible") return;
+          const isViewing =
+            msg.conversation_id === selectedRef.current.id &&
+            !listOpenRef.current &&
+            document.visibilityState === "visible";
+          if (isViewing) return;
 
           if (msg.conversation_id === groupConversationId) {
             setGroupUnread(true);
@@ -344,7 +365,15 @@ export default function ChatApp({
       ? "Family"
       : memberById.get(selected.otherId)?.display_name ?? "Member";
 
-  const anyUnread = groupUnread || directUnread.size > 0;
+  // A conversation's unread badge is hidden while it's the one on screen.
+  const viewing = !listOpen;
+  const showGroupUnread = groupUnread && !(viewing && selected.type === "group");
+  const showDirectUnread = (otherId: string) =>
+    directUnread.has(otherId) &&
+    !(viewing && selected.type === "direct" && selected.otherId === otherId);
+  // Unread anywhere other than the conversation currently open (for the bar).
+  const otherUnread =
+    showGroupUnread || others.some((m) => showDirectUnread(m.user_id));
 
   // Index of the last message I sent — only this one shows a status line.
   let lastMineIndex = -1;
@@ -377,39 +406,37 @@ export default function ChatApp({
     <div className="flex flex-col lg:flex-row gap-6 items-start">
       {/* Conversation list */}
       <aside className="w-full lg:w-64 lg:shrink-0 bg-white rounded-2xl border border-gray-100 shadow-sm p-2">
-        {/* Mobile-only collapsed bar: shows the open chat, tap to switch. */}
-        <button
-          onClick={() => setListOpen((o) => !o)}
-          className="lg:hidden w-full flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50"
-          aria-expanded={listOpen}
-        >
-          {selected.type === "group" ? (
-            <div className="w-9 h-9 rounded-full bg-sky-100 flex items-center justify-center text-lg">
-              👨‍👩‍👧‍👦
-            </div>
-          ) : (
-            <Avatar
-              name={headerTitle}
-              url={memberById.get(selected.otherId)?.avatar_url ?? null}
-              size={36}
-            />
-          )}
-          <span className="flex-1 text-left font-medium text-gray-800 truncate">
-            {selected.type === "group" ? "Family" : headerTitle}
-          </span>
-          {anyUnread && !listOpen && (
-            <span className="w-2.5 h-2.5 rounded-full bg-sky-600 shrink-0" />
-          )}
-          <span
-            className={`shrink-0 text-gray-400 transition-transform ${
-              listOpen ? "rotate-180" : ""
-            }`}
+        {/* Mobile-only "back to chats" bar, shown while a conversation is open. */}
+        {!listOpen && (
+          <button
+            onClick={() => setListOpen(true)}
+            className="lg:hidden w-full flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50"
           >
-            ▾
-          </span>
-        </button>
+            <span className="shrink-0 text-gray-400 text-xl leading-none">‹</span>
+            {selected.type === "group" ? (
+              <div className="w-8 h-8 rounded-full bg-sky-100 flex items-center justify-center">
+                👨‍👩‍👧‍👦
+              </div>
+            ) : (
+              <Avatar
+                name={headerTitle}
+                url={memberById.get(selected.otherId)?.avatar_url ?? null}
+                size={32}
+              />
+            )}
+            <span className="flex-1 text-left text-sm text-gray-500 truncate">
+              All chats
+            </span>
+            {otherUnread && (
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-600 shrink-0" />
+            )}
+          </button>
+        )}
 
         <div className={`${listOpen ? "block" : "hidden"} lg:block`}>
+        <p className="lg:hidden text-xs font-semibold text-gray-400 uppercase tracking-wide px-2 pt-1 pb-1">
+          Chats
+        </p>
         <button
           onClick={selectGroup}
           className={`w-full flex items-center gap-3 p-2 rounded-lg transition-colors ${
@@ -421,12 +448,12 @@ export default function ChatApp({
           </div>
           <span
             className={`flex-1 text-left ${
-              groupUnread ? "font-semibold text-gray-900" : "font-medium text-gray-800"
+              showGroupUnread ? "font-semibold text-gray-900" : "font-medium text-gray-800"
             }`}
           >
             Family
           </span>
-          {groupUnread && (
+          {showGroupUnread && (
             <span className="w-2.5 h-2.5 rounded-full bg-sky-600 shrink-0" />
           )}
         </button>
@@ -437,7 +464,7 @@ export default function ChatApp({
         {others.map((m) => {
           const online = onlineIds.has(m.user_id);
           const active = selected.type === "direct" && selected.otherId === m.user_id;
-          const unread = directUnread.has(m.user_id);
+          const unread = showDirectUnread(m.user_id);
           return (
             <button
               key={m.user_id}
@@ -471,7 +498,11 @@ export default function ChatApp({
       </aside>
 
       {/* Conversation */}
-      <div className="flex-1 min-w-0 w-full bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col h-[70vh]">
+      <div
+        className={`${
+          listOpen ? "hidden lg:flex" : "flex"
+        } flex-1 min-w-0 w-full bg-white rounded-2xl border border-gray-100 shadow-sm flex-col h-[70vh]`}
+      >
         <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-800">
           {selected.type === "group" ? "👨‍👩‍👧‍👦 Family chat" : `💬 ${headerTitle}`}
         </div>

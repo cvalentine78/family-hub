@@ -107,10 +107,10 @@ export default async function DashboardPage() {
         <DashboardCard
           href="/app/chat"
           icon="💬"
-          title="Family Chat"
+          title="Chat"
           accent="bg-rose-50"
         >
-          <p className="text-sm text-gray-400">Message the whole family</p>
+          <p className="text-sm text-gray-400">Group &amp; direct messages</p>
         </DashboardCard>
 
         {/* Grocery List */}

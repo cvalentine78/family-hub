@@ -15,7 +15,7 @@ const TABS = [
 export default function Nav() {
   const pathname = usePathname();
   return (
-    <nav className="flex gap-1 overflow-x-auto max-w-full -mx-1 px-1">
+    <nav className="hidden lg:flex gap-1 overflow-x-auto max-w-full -mx-1 px-1">
       {TABS.map((tab) => {
         const active = pathname === tab.href;
         return (

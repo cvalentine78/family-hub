@@ -11,6 +11,7 @@ import LocationSharer from "./LocationSharer";
 import NativeLocationSharer from "./NativeLocationSharer";
 import NativePushRegistrar from "./NativePushRegistrar";
 import Heartbeat from "./Heartbeat";
+import BottomNav from "./BottomNav";
 
 export default async function AppLayout({
   children,
@@ -55,7 +56,8 @@ export default async function AppLayout({
       )}
       <NativePushRegistrar userId={user.id} />
       <Heartbeat userId={user.id} />
-      {children}
+      <div className="pb-20 lg:pb-0">{children}</div>
+      <BottomNav />
     </div>
   );
 }

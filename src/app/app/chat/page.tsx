@@ -126,6 +126,7 @@ export default async function ChatPage({
         initialMessages={initialMessages}
         initialGroupUnread={initialGroupUnread}
         initialDirectUnread={initialDirectUnread}
+        deepLinked={Boolean(c)}
       />
     </div>
   );
