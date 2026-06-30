@@ -32,11 +32,7 @@ export default async function MembersPage() {
         <Nav />
       </div>
 
-      <MembersList
-        familyId={family.id}
-        members={members}
-        currentUserId={user.id}
-      />
+      <MembersList members={members} currentUserId={user.id} />
     </div>
   );
 }

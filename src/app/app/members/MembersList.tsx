@@ -1,49 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
 import Avatar from "./Avatar";
 import type { Member } from "@/lib/family";
+import { useFamilyPresence } from "../useFamilyPresence";
+import { isActive, lastSeenLabel } from "@/lib/presence";
 
 export default function MembersList({
-  familyId,
   members,
   currentUserId,
 }: {
-  familyId: string;
   members: Member[];
   currentUserId: string;
 }) {
-  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const memberIds = useMemo(() => members.map((m) => m.user_id), [members]);
+  const initial = useMemo(
+    () => Object.fromEntries(members.map((m) => [m.user_id, m.last_seen])),
+    [members]
+  );
+  const { lastSeen, now } = useFamilyPresence(memberIds, initial);
 
-  // Join a presence channel for this family and track who's connected.
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase.channel(`presence:family:${familyId}`, {
-      config: { presence: { key: currentUserId } },
-    });
-
-    channel
-      .on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState();
-        setOnlineIds(new Set(Object.keys(state)));
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await channel.track({ online_at: new Date().toISOString() });
-        }
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [familyId, currentUserId]);
-
-  // Sort: online first, then by name.
+  // Sort: active first, then by name.
   const sorted = [...members].sort((a, b) => {
-    const aOn = onlineIds.has(a.user_id) ? 0 : 1;
-    const bOn = onlineIds.has(b.user_id) ? 0 : 1;
+    const aOn = isActive(lastSeen[a.user_id], now) ? 0 : 1;
+    const bOn = isActive(lastSeen[b.user_id], now) ? 0 : 1;
     if (aOn !== bOn) return aOn - bOn;
     return a.display_name.localeCompare(b.display_name);
   });
@@ -52,7 +33,7 @@ export default function MembersList({
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
       <ul className="divide-y divide-gray-100">
         {sorted.map((m) => {
-          const online = onlineIds.has(m.user_id);
+          const online = isActive(lastSeen[m.user_id], now);
           const isSelf = m.user_id === currentUserId;
           return (
             <li key={m.user_id}>
@@ -66,7 +47,7 @@ export default function MembersList({
                     className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-white ${
                       online ? "bg-green-500" : "bg-gray-300"
                     }`}
-                    title={online ? "Online" : "Offline"}
+                    title={lastSeenLabel(lastSeen[m.user_id], now)}
                   />
                 </div>
 
@@ -90,7 +71,7 @@ export default function MembersList({
                     </p>
                   ) : (
                     <p className="text-xs text-gray-400">
-                      {online ? "Online now" : "Offline"}
+                      {lastSeenLabel(lastSeen[m.user_id], now)}
                     </p>
                   )}
                 </div>

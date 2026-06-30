@@ -61,7 +61,7 @@ export default function NativeLocationSharer({
       // Supabase query builders are lazy PromiseLikes — the request is only
       // sent when the builder is awaited (or .then()'d). These MUST be awaited
       // or the writes never leave the device.
-      const [current, breadcrumb] = await Promise.all([
+      const [current, breadcrumb, seen] = await Promise.all([
         // Current position (single row per user, drives the live map).
         supabase.from("locations").upsert({
           user_id: userId,
@@ -80,10 +80,14 @@ export default function NativeLocationSharer({
           accuracy: loc.accuracy,
           recorded_at: recordedAt,
         }),
+        // Keep "last seen" fresh even while backgrounded, so a moving phone
+        // still reads as recently active (the foreground Heartbeat is paused).
+        supabase.from("profiles").update({ last_seen: recordedAt }).eq("id", userId),
       ]);
 
       if (current.error) console.error("locations upsert failed:", current.error.message);
       if (breadcrumb.error) console.error("location_history insert failed:", breadcrumb.error.message);
+      if (seen.error) console.error("last_seen update failed:", seen.error.message);
     }
 
     BackgroundGeolocation.addWatcher(

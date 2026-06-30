@@ -1,46 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
 import Avatar from "./members/Avatar";
 import type { Member } from "@/lib/family";
+import { useFamilyPresence } from "./useFamilyPresence";
+import { isActive, lastSeenLabel } from "@/lib/presence";
 
 export default function OnlineMembers({
-  familyId,
   members,
   currentUserId,
 }: {
-  familyId: string;
   members: Member[];
   currentUserId: string;
 }) {
-  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+  const memberIds = useMemo(() => members.map((m) => m.user_id), [members]);
+  const initial = useMemo(
+    () => Object.fromEntries(members.map((m) => [m.user_id, m.last_seen])),
+    [members]
+  );
+  const { lastSeen, now } = useFamilyPresence(memberIds, initial);
 
-  useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase.channel(`presence:family:${familyId}`, {
-      config: { presence: { key: currentUserId } },
-    });
-
-    channel
-      .on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState();
-        setOnlineIds(new Set(Object.keys(state)));
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await channel.track({ online_at: new Date().toISOString() });
-        }
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [familyId, currentUserId]);
-
-  const online = members.filter((m) => onlineIds.has(m.user_id));
-  const offline = members.filter((m) => !onlineIds.has(m.user_id));
+  const online = members.filter((m) => isActive(lastSeen[m.user_id], now));
+  const offline = members.filter((m) => !isActive(lastSeen[m.user_id], now));
 
   function Row({ m, isOnline }: { m: Member; isOnline: boolean }) {
     return (
@@ -56,14 +38,21 @@ export default function OnlineMembers({
             }`}
           />
         </div>
-        <span
-          className={`text-sm truncate ${
-            isOnline ? "text-gray-800 font-medium" : "text-gray-400"
-          }`}
-        >
-          {m.display_name}
-          {m.user_id === currentUserId && (
-            <span className="text-gray-400 font-normal"> (you)</span>
+        <span className="min-w-0">
+          <span
+            className={`block text-sm truncate ${
+              isOnline ? "text-gray-800 font-medium" : "text-gray-400"
+            }`}
+          >
+            {m.display_name}
+            {m.user_id === currentUserId && (
+              <span className="text-gray-400 font-normal"> (you)</span>
+            )}
+          </span>
+          {!isOnline && (
+            <span className="block text-[11px] text-gray-400 truncate">
+              {lastSeenLabel(lastSeen[m.user_id], now)}
+            </span>
           )}
         </span>
       </Link>

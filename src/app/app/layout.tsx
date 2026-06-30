@@ -10,6 +10,7 @@ import SignOutButton from "./SignOutButton";
 import LocationSharer from "./LocationSharer";
 import NativeLocationSharer from "./NativeLocationSharer";
 import NativePushRegistrar from "./NativePushRegistrar";
+import Heartbeat from "./Heartbeat";
 
 export default async function AppLayout({
   children,
@@ -53,6 +54,7 @@ export default async function AppLayout({
         </>
       )}
       <NativePushRegistrar userId={user.id} />
+      <Heartbeat userId={user.id} />
       {children}
     </div>
   );

@@ -140,7 +140,7 @@ export default async function DashboardPage() {
             {members.length} member{members.length === 1 ? "" : "s"}
           </p>
           <div className="mt-1">
-            <OnlineCount familyId={family.id} currentUserId={user.id} />
+            <OnlineCount members={members} />
           </div>
         </DashboardCard>
 

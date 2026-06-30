@@ -45,11 +45,7 @@ export default async function CalendarPage() {
           <Calendar familyId={family.id} events={events} />
         </div>
         <aside className="order-2 lg:order-1 w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-6">
-          <OnlineMembers
-            familyId={family.id}
-            members={members}
-            currentUserId={user.id}
-          />
+          <OnlineMembers members={members} currentUserId={user.id} />
         </aside>
       </div>
     </div>
