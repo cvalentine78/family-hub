@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   APIProvider,
   Map as GoogleMap,
   AdvancedMarker,
   useMap,
+  useMapsLibrary,
 } from "@vis.gl/react-google-maps";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
@@ -18,6 +19,22 @@ type Loc = {
   updated_at: string;
 };
 
+type Crumb = {
+  lat: number;
+  lng: number;
+  recorded_at: string;
+};
+
+type Mode = "live" | "history";
+type Range = "1h" | "today" | "24h" | "7d";
+
+const RANGE_LABELS: Record<Range, string> = {
+  "1h": "Last hour",
+  today: "Today",
+  "24h": "Last 24 hours",
+  "7d": "Last 7 days",
+};
+
 function timeAgo(iso: string) {
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (secs < 60) return "just now";
@@ -26,6 +43,54 @@ function timeAgo(iso: string) {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// Start of the local day, or a fixed number of ms back, as an ISO string.
+function cutoffFor(range: Range): string {
+  if (range === "today") {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+  const ms = range === "1h" ? 3_600_000 : range === "24h" ? 86_400_000 : 7 * 86_400_000;
+  return new Date(Date.now() - ms).toISOString();
+}
+
+// Great-circle distance between two points, in meters.
+function haversine(a: Crumb, b: Crumb): number {
+  const R = 6_371_000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function formatDistance(meters: number): string {
+  const miles = meters * 0.000621371;
+  if (miles < 0.1) return `${Math.round(meters * 3.28084)} ft`;
+  return `${miles.toFixed(1)} mi`;
+}
+
+function formatSpan(from: string, to: string): string {
+  const mins = Math.round(
+    (new Date(to).getTime() - new Date(from).getTime()) / 60000
+  );
+  if (mins < 60) return `${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem ? `${hrs}h ${rem}m` : `${hrs}h`;
+}
+
+function shortTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default function FamilyMap({
@@ -48,6 +113,15 @@ export default function FamilyMap({
     "idle" | "working" | "ok" | "error"
   >("idle");
   const [statusMsg, setStatusMsg] = useState<string>("");
+
+  // History view state.
+  const [mode, setMode] = useState<Mode>("live");
+  const [historyUserId, setHistoryUserId] = useState<string>(currentUserId);
+  const [range, setRange] = useState<Range>("today");
+  const [crumbs, setCrumbs] = useState<Crumb[]>([]);
+  // The selection the loaded crumbs belong to; while it lags the current
+  // selection we're still fetching. Avoids a setState-in-effect loading flag.
+  const [loadedKey, setLoadedKey] = useState<string>("");
 
   const memberById = new Map(members.map((m) => [m.user_id, m]));
 
@@ -130,7 +204,47 @@ export default function FamilyMap({
     };
   }, [familyId]);
 
+  const historyKey = `${familyId}|${historyUserId}|${range}`;
+  const historyLoading = mode === "history" && loadedKey !== historyKey;
+
+  // Fetch the breadcrumb trail whenever the history selection changes.
+  useEffect(() => {
+    if (mode !== "history") return;
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .from("location_history")
+      .select("lat, lng, recorded_at")
+      .eq("family_id", familyId)
+      .eq("user_id", historyUserId)
+      .gte("recorded_at", cutoffFor(range))
+      .order("recorded_at", { ascending: true })
+      .limit(1000)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) console.error("location_history fetch failed:", error.message);
+        setCrumbs((data as Crumb[]) ?? []);
+        setLoadedKey(historyKey);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, historyUserId, range, familyId, historyKey]);
+
   const locArray = Array.from(locations.values());
+
+  const trailStats = useMemo(() => {
+    if (crumbs.length < 2) return null;
+    let meters = 0;
+    for (let i = 1; i < crumbs.length; i++) {
+      meters += haversine(crumbs[i - 1], crumbs[i]);
+    }
+    return {
+      meters,
+      from: crumbs[0].recorded_at,
+      to: crumbs[crumbs.length - 1].recorded_at,
+    };
+  }, [crumbs]);
 
   // Center on the average of known locations, else a default.
   let center = { lat: 39.5, lng: -98.35 };
@@ -143,30 +257,97 @@ export default function FamilyMap({
     zoom = locArray.length === 1 ? 18 : 16;
   }
 
+  const historyMember = memberById.get(historyUserId);
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
-        <p className="text-sm text-gray-500">
-          {locArray.length} member{locArray.length === 1 ? "" : "s"} sharing
-          location
-        </p>
-        <div className="flex items-center gap-3">
+      {/* Mode switch */}
+      <div className="inline-flex rounded-lg bg-gray-100 p-0.5 mb-3">
+        {(["live", "history"] as Mode[]).map((m) => (
           <button
-            onClick={updateNow}
-            disabled={updateStatus === "working"}
-            className="text-sm font-medium bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
+            key={m}
+            onClick={() => setMode(m)}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              mode === m
+                ? "bg-white text-sky-700 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
           >
-            {updateStatus === "working" ? "Locating…" : "📍 Update my location"}
+            {m === "live" ? "Live" : "History"}
           </button>
-          <Link
-            href={`/app/members/${currentUserId}`}
-            className="text-sm font-medium text-sky-600 hover:text-sky-700"
-          >
-            Settings
-          </Link>
-        </div>
+        ))}
       </div>
-      {statusMsg && (
+
+      {mode === "live" ? (
+        <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+          <p className="text-sm text-gray-500">
+            {locArray.length} member{locArray.length === 1 ? "" : "s"} sharing
+            location
+          </p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={updateNow}
+              disabled={updateStatus === "working"}
+              className="text-sm font-medium bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
+            >
+              {updateStatus === "working" ? "Locating…" : "📍 Update my location"}
+            </button>
+            <Link
+              href={`/app/members/${currentUserId}`}
+              className="text-sm font-medium text-sky-600 hover:text-sky-700"
+            >
+              Settings
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <div className="mb-2 flex items-end justify-between gap-3 flex-wrap">
+          <div className="flex items-end gap-3 flex-wrap">
+            <label className="flex flex-col text-xs font-medium text-gray-500">
+              Member
+              <select
+                value={historyUserId}
+                onChange={(e) => setHistoryUserId(e.target.value)}
+                className="mt-1 text-sm font-medium text-gray-800 bg-white border border-gray-200 rounded-lg px-2 py-1.5"
+              >
+                {members.map((m) => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {m.user_id === currentUserId ? "You" : m.display_name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs font-medium text-gray-500">
+              When
+              <select
+                value={range}
+                onChange={(e) => setRange(e.target.value as Range)}
+                className="mt-1 text-sm font-medium text-gray-800 bg-white border border-gray-200 rounded-lg px-2 py-1.5"
+              >
+                {(Object.keys(RANGE_LABELS) as Range[]).map((r) => (
+                  <option key={r} value={r}>
+                    {RANGE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="text-sm text-gray-500">
+            {historyLoading
+              ? "Loading trail…"
+              : crumbs.length === 0
+              ? "No location history for this window."
+              : trailStats
+              ? `${crumbs.length} points · ${formatSpan(
+                  trailStats.from,
+                  trailStats.to
+                )} · ${formatDistance(trailStats.meters)}`
+              : `${crumbs.length} point`}
+          </p>
+        </div>
+      )}
+
+      {mode === "live" && statusMsg && (
         <p
           className={`text-sm mb-3 ${
             updateStatus === "error"
@@ -190,43 +371,70 @@ export default function FamilyMap({
             disableDefaultUI={false}
             style={{ width: "100%", height: "70vh" }}
           >
-            <FitBounds locs={locArray} />
-            {locArray.map((loc) => {
-              const m = memberById.get(loc.user_id);
-              const name = m?.display_name ?? "Member";
-              return (
-                <AdvancedMarker
-                  key={loc.user_id}
-                  position={{ lat: loc.lat, lng: loc.lng }}
-                  title={`${name} · ${timeAgo(loc.updated_at)}`}
-                >
-                  <div className="flex flex-col items-center">
-                    <div className="w-10 h-10 rounded-full border-2 border-white shadow-md overflow-hidden bg-sky-100">
-                      {m?.avatar_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={m.avatar_url}
-                          alt={name}
-                          loading="lazy"
-                          decoding="async"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-sky-700 font-semibold text-sm">
-                          {name.slice(0, 2).toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-                    <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
-                      {loc.user_id === currentUserId ? "You" : name}
-                    </span>
-                  </div>
-                </AdvancedMarker>
-              );
-            })}
+            {mode === "live" ? (
+              <>
+                <FitBounds locs={locArray} />
+                {locArray.map((loc) => {
+                  const m = memberById.get(loc.user_id);
+                  const name = m?.display_name ?? "Member";
+                  return (
+                    <AdvancedMarker
+                      key={loc.user_id}
+                      position={{ lat: loc.lat, lng: loc.lng }}
+                      title={`${name} · ${timeAgo(loc.updated_at)}`}
+                    >
+                      <div className="flex flex-col items-center">
+                        <MemberPin member={m} name={name} />
+                        <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
+                          {loc.user_id === currentUserId ? "You" : name}
+                        </span>
+                      </div>
+                    </AdvancedMarker>
+                  );
+                })}
+              </>
+            ) : (
+              <HistoryTrail
+                crumbs={crumbs}
+                member={historyMember}
+                memberName={
+                  historyUserId === currentUserId
+                    ? "You"
+                    : historyMember?.display_name ?? "Member"
+                }
+              />
+            )}
           </GoogleMap>
         </APIProvider>
       </div>
+    </div>
+  );
+}
+
+// A round avatar pin (photo if available, else initials).
+function MemberPin({
+  member,
+  name,
+}: {
+  member: Member | undefined;
+  name: string;
+}) {
+  return (
+    <div className="w-10 h-10 rounded-full border-2 border-white shadow-md overflow-hidden bg-sky-100">
+      {member?.avatar_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={member.avatar_url}
+          alt={name}
+          loading="lazy"
+          decoding="async"
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-sky-700 font-semibold text-sm">
+          {name.slice(0, 2).toUpperCase()}
+        </div>
+      )}
     </div>
   );
 }
@@ -259,4 +467,104 @@ function FitBounds({ locs }: { locs: Loc[] }) {
   }, [map, locs]);
 
   return null;
+}
+
+// Draws a breadcrumb trail: a polyline through every fix, small dots at each
+// ping, a green flag at the start and the member's avatar at the latest fix.
+// Auto-fits the map to the whole trail.
+function HistoryTrail({
+  crumbs,
+  member,
+  memberName,
+}: {
+  crumbs: Crumb[];
+  member: Member | undefined;
+  memberName: string;
+}) {
+  const map = useMap();
+  const mapsLib = useMapsLibrary("maps");
+
+  // The polyline is drawn imperatively — this version of the library has no
+  // declarative Polyline component.
+  useEffect(() => {
+    if (!map || !mapsLib || crumbs.length < 2) return;
+    const line = new mapsLib.Polyline({
+      path: crumbs.map((c) => ({ lat: c.lat, lng: c.lng })),
+      geodesic: true,
+      strokeColor: "#0284c7",
+      strokeOpacity: 0.9,
+      strokeWeight: 4,
+    });
+    line.setMap(map);
+    return () => line.setMap(null);
+  }, [map, mapsLib, crumbs]);
+
+  // Frame the whole trail (or a single point) when it changes.
+  useEffect(() => {
+    if (!map || crumbs.length === 0) return;
+    if (crumbs.length === 1) {
+      map.setCenter({ lat: crumbs[0].lat, lng: crumbs[0].lng });
+      map.setZoom(17);
+      return;
+    }
+    const lats = crumbs.map((c) => c.lat);
+    const lngs = crumbs.map((c) => c.lng);
+    map.fitBounds(
+      {
+        north: Math.max(...lats),
+        south: Math.min(...lats),
+        east: Math.max(...lngs),
+        west: Math.min(...lngs),
+      },
+      80
+    );
+  }, [map, crumbs]);
+
+  if (crumbs.length === 0) return null;
+
+  const start = crumbs[0];
+  const end = crumbs[crumbs.length - 1];
+  // Skip endpoints; only show intermediate dots, and cap them so a long trail
+  // doesn't spawn a thousand markers.
+  const dots =
+    crumbs.length > 2 && crumbs.length <= 250 ? crumbs.slice(1, -1) : [];
+
+  return (
+    <>
+      {dots.map((c, i) => (
+        <AdvancedMarker
+          key={`${c.recorded_at}-${i}`}
+          position={{ lat: c.lat, lng: c.lng }}
+          title={shortTime(c.recorded_at)}
+        >
+          <div className="w-2.5 h-2.5 rounded-full bg-sky-500 border border-white shadow-sm" />
+        </AdvancedMarker>
+      ))}
+
+      {crumbs.length > 1 && (
+        <AdvancedMarker
+          position={{ lat: start.lat, lng: start.lng }}
+          title={`Start · ${shortTime(start.recorded_at)}`}
+        >
+          <div className="flex flex-col items-center">
+            <div className="w-6 h-6 rounded-full bg-emerald-500 border-2 border-white shadow-md flex items-center justify-center text-white text-xs">
+              ▶
+            </div>
+          </div>
+        </AdvancedMarker>
+      )}
+
+      <AdvancedMarker
+        position={{ lat: end.lat, lng: end.lng }}
+        title={`Latest · ${shortTime(end.recorded_at)}`}
+      >
+        <div className="flex flex-col items-center">
+          <MemberPin member={member} name={memberName} />
+          <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
+            {memberName} · {timeAgo(end.recorded_at)}
+          </span>
+        </div>
+      </AdvancedMarker>
+    </>
+  );
 }
