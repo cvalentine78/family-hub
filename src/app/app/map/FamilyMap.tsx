@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   APIProvider,
   Map as GoogleMap,
@@ -114,6 +114,32 @@ export default function FamilyMap({
     "idle" | "working" | "ok" | "error"
   >("idle");
   const [statusMsg, setStatusMsg] = useState<string>("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Re-pull the latest saved positions from the DB and redraw. Realtime keeps
+  // the map live while connected; this re-syncs after the connection has been
+  // asleep (e.g. the app was backgrounded) so it's current the moment you look.
+  const refreshMap = useCallback(async () => {
+    setRefreshing(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("locations")
+      .select("user_id, lat, lng, updated_at")
+      .eq("family_id", familyId);
+    if (data) {
+      setLocations(new Map(data.map((l) => [l.user_id, l as Loc])));
+    }
+    setRefreshing(false);
+  }, [familyId]);
+
+  // Refresh whenever the map comes back into view.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshMap();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refreshMap]);
 
   // Broadcast channel used to ask every family device that's open to report a
   // fresh fix (see LocationRefreshResponder).
@@ -309,6 +335,13 @@ export default function FamilyMap({
             location
           </p>
           <div className="flex items-center gap-3">
+            <button
+              onClick={refreshMap}
+              disabled={refreshing}
+              className="text-sm font-medium bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 px-3 py-1.5 rounded-lg"
+            >
+              {refreshing ? "Refreshing…" : "🔄 Refresh"}
+            </button>
             <button
               onClick={updateNow}
               disabled={updateStatus === "working"}
