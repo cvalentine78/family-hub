@@ -36,6 +36,7 @@ export type Member = {
   avatar_url: string | null;
   status: string | null;
   last_seen: string | null;
+  share_location: boolean;
 };
 
 // Makes sure the current user has a profile row, defaulting the display
@@ -75,6 +76,7 @@ type ProfileRow = {
   avatar_url: string | null;
   status: string | null;
   last_seen: string | null;
+  share_location: boolean | null;
 };
 
 // Returns all members of a family with their full profile info.
@@ -91,7 +93,7 @@ export async function getFamilyMembers(familyId: string): Promise<Member[]> {
   const ids = members.map((m) => m.user_id);
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, display_name, email, phone, avatar_url, status, last_seen")
+    .select("id, display_name, email, phone, avatar_url, status, last_seen, share_location")
     .in("id", ids);
 
   const byId = new Map(
@@ -109,6 +111,7 @@ export async function getFamilyMembers(familyId: string): Promise<Member[]> {
       avatar_url: p?.avatar_url ?? null,
       status: p?.status ?? null,
       last_seen: p?.last_seen ?? null,
+      share_location: p?.share_location ?? false,
     };
   });
 }

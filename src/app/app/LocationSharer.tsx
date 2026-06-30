@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Capacitor } from "@capacitor/core";
 import { createClient } from "@/lib/supabase/client";
+import { MAX_ACCURACY_M } from "@/lib/location";
 
 // Invisible component: when `enabled`, continuously shares the current
 // user's location with their family while the app is open.
@@ -39,6 +40,7 @@ export default function LocationSharer({
     watchId.current = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
+        if (accuracy != null && accuracy > MAX_ACCURACY_M) return; // skip imprecise fixes
         push(latitude, longitude, accuracy);
       },
       () => {

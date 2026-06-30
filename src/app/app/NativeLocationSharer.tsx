@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { createClient } from "@/lib/supabase/client";
+import { MAX_ACCURACY_M } from "@/lib/location";
 
 // Minimal typings for @capacitor-community/background-geolocation.
 interface BgLocation {
@@ -56,6 +57,10 @@ export default function NativeLocationSharer({
     let cancelled = false;
 
     async function record(loc: BgLocation) {
+      // Drop imprecise fixes (indoor GPS / wifi / cell) before they pollute the
+      // map and trail with phantom jumps.
+      if (loc.accuracy != null && loc.accuracy > MAX_ACCURACY_M) return;
+
       const recordedAt = new Date(loc.time ?? Date.now()).toISOString();
 
       // Supabase query builders are lazy PromiseLikes — the request is only
@@ -96,7 +101,7 @@ export default function NativeLocationSharer({
         backgroundMessage: "Sharing your location with your family.",
         requestPermissions: true,
         stale: false,
-        distanceFilter: 10, // meters of movement before a new fix
+        distanceFilter: 25, // meters of movement before a new fix (cuts indoor jitter)
       },
       (location, error) => {
         if (error) {

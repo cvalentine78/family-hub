@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { MAX_ACCURACY_M } from "@/lib/location";
 
 // Invisible, app-wide: listens for a family-wide "refresh location" request
 // (broadcast from the map's Update everyone button) and, if this user shares
@@ -28,6 +29,7 @@ export default function LocationRefreshResponder({
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const { latitude, longitude, accuracy } = pos.coords;
+          if (accuracy != null && accuracy > MAX_ACCURACY_M) return; // skip imprecise fixes
           // Supabase query builders are lazy — must be awaited to actually send.
           const { error } = await supabase.from("locations").upsert({
             user_id: userId,

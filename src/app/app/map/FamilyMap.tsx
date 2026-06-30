@@ -10,6 +10,7 @@ import {
 } from "@vis.gl/react-google-maps";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { MAX_ACCURACY_M } from "@/lib/location";
 import Link from "next/link";
 import type { Member } from "@/lib/family";
 
@@ -183,10 +184,17 @@ export default function FamilyMap({
       return;
     }
     setUpdateStatus("working");
-    setStatusMsg("Updating locations…");
+    setStatusMsg("");
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
+        if (accuracy != null && accuracy > MAX_ACCURACY_M) {
+          setUpdateStatus("error");
+          setStatusMsg(
+            "Couldn't get an accurate fix (you may be indoors). Try again near a window or outside."
+          );
+          return;
+        }
         const supabase = createClient();
         const { error } = await supabase.from("locations").upsert({
           user_id: currentUserId,
@@ -201,7 +209,7 @@ export default function FamilyMap({
           setStatusMsg("Couldn't save location. Try again.");
         } else {
           setUpdateStatus("ok");
-          setStatusMsg("Updated. Asked the family to refresh too ✓");
+          setStatusMsg("");
         }
       },
       (err) => {
@@ -268,12 +276,18 @@ export default function FamilyMap({
       .eq("family_id", familyId)
       .eq("user_id", historyUserId)
       .gte("recorded_at", cutoffFor(range))
-      .order("recorded_at", { ascending: true })
-      .limit(1000)
+      // Drop imprecise fixes so the trail doesn't show phantom jumps.
+      .or(`accuracy.is.null,accuracy.lte.${MAX_ACCURACY_M}`)
+      // Fetch newest-first so a long day isn't truncated to its OLDEST points
+      // (which hid recent travel and showed a stale "latest" position).
+      .order("recorded_at", { ascending: false })
+      .limit(5000)
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) console.error("location_history fetch failed:", error.message);
-        setCrumbs((data as Crumb[]) ?? []);
+        // Flip back to chronological order for drawing the trail.
+        const rows = ((data as Crumb[]) ?? []).slice().reverse();
+        setCrumbs(rows);
         setLoadedKey(historyKey);
       });
     return () => {
@@ -309,6 +323,10 @@ export default function FamilyMap({
 
   const historyMember = memberById.get(historyUserId);
 
+  // Family members who aren't sharing their location (so they never appear on
+  // the map). share_location defaults off until they turn it on.
+  const notSharing = members.filter((m) => !m.share_location);
+
   return (
     <div>
       {/* Mode switch */}
@@ -329,34 +347,44 @@ export default function FamilyMap({
       </div>
 
       {mode === "live" ? (
-        <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
-          <p className="text-sm text-gray-500">
-            {locArray.length} member{locArray.length === 1 ? "" : "s"} sharing
-            location
-          </p>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={refreshMap}
-              disabled={refreshing}
-              className="text-sm font-medium bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 px-3 py-1.5 rounded-lg"
-            >
-              {refreshing ? "Refreshing…" : "🔄 Refresh"}
-            </button>
-            <button
-              onClick={updateNow}
-              disabled={updateStatus === "working"}
-              className="text-sm font-medium bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
-            >
-              {updateStatus === "working" ? "Updating…" : "📍 Update everyone"}
-            </button>
-            <Link
-              href={`/app/members/${currentUserId}`}
-              className="text-sm font-medium text-sky-600 hover:text-sky-700"
-            >
-              Settings
-            </Link>
+        <>
+          <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+            <p className="text-sm text-gray-500">
+              {locArray.length} member{locArray.length === 1 ? "" : "s"} sharing
+              location
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={refreshMap}
+                disabled={refreshing}
+                className="text-sm font-medium bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 px-3 py-1.5 rounded-lg"
+              >
+                {refreshing ? "Refreshing…" : "🔄 Refresh"}
+              </button>
+              <button
+                onClick={updateNow}
+                disabled={updateStatus === "working"}
+                className="text-sm font-medium bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg"
+              >
+                {updateStatus === "working" ? "Updating…" : "📍 Update everyone"}
+              </button>
+              <Link
+                href={`/app/members/${currentUserId}`}
+                className="text-sm font-medium text-sky-600 hover:text-sky-700"
+              >
+                Settings
+              </Link>
+            </div>
           </div>
-        </div>
+          {notSharing.length > 0 && (
+            <p className="text-sm text-amber-600 mb-1">
+              📍 Not sharing:{" "}
+              {notSharing
+                .map((m) => (m.user_id === currentUserId ? "You" : m.display_name))
+                .join(", ")}
+            </p>
+          )}
+        </>
       ) : (
         <div className="mb-2 flex items-end justify-between gap-3 flex-wrap">
           <div className="flex items-end gap-3 flex-wrap">
