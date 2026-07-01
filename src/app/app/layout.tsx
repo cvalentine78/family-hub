@@ -13,6 +13,7 @@ import LocationRefreshResponder from "./LocationRefreshResponder";
 import NativePushRegistrar from "./NativePushRegistrar";
 import Heartbeat from "./Heartbeat";
 import BottomNav from "./BottomNav";
+import BuildBadge from "./BuildBadge";
 
 export default async function AppLayout({
   children,
@@ -60,6 +61,7 @@ export default async function AppLayout({
       <Heartbeat userId={user.id} />
       <div className="pb-20 lg:pb-0">{children}</div>
       <BottomNav />
+      <BuildBadge />
     </div>
   );
 }
