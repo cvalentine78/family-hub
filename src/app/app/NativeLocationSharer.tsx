@@ -53,6 +53,7 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
           notification: {
             title: "Family Hub",
             text: "Sharing your location with your family.",
+            sticky: true, // can't be swiped away — a permanent "tracking on" indicator
           },
           backgroundPermissionRationale: {
             title: "Allow Family Hub to access location in the background?",
