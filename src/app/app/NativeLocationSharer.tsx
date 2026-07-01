@@ -55,6 +55,11 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
             title: "Family Hub",
             text: "Sharing your location with your family.",
             sticky: true, // can't be swiped away — a permanent "tracking on" indicator
+            // Distinct pin icon so this always-on notification doesn't look
+            // identical to chat/push notifications (both defaulted to the
+            // launcher icon before, making new messages easy to miss).
+            smallIcon: "drawable/ic_stat_location",
+            color: "#0284C7",
           },
           backgroundPermissionRationale: {
             title: "Allow Family Hub to access location in the background?",
