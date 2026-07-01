@@ -146,6 +146,19 @@ export default function InventoryList({
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("");
 
+  // Which category groups are expanded. Empty = all collapsed (the default),
+  // so inventory opens as a tidy list of categories you tap to expand.
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
+
+  function toggleCat(cat: string) {
+    setExpandedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  }
+
   // Editing an existing item.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -703,13 +716,39 @@ export default function InventoryList({
           Nothing matches your search or filter.
         </p>
       ) : (
-        <div className="space-y-5">
-          {sortedGroups.map(([cat, list]) => (
-            <div key={cat}>
-              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
-                {cat}
-              </h3>
-              <ul className="space-y-1">
+        <div className="space-y-2">
+          {sortedGroups.map(([cat, list]) => {
+            // While searching, force groups open so matches are always visible.
+            const open = term !== "" || expandedCats.has(cat);
+            const attention = list.filter(
+              (i) => i.quantity === 0 || i.quantity <= i.threshold
+            ).length;
+            return (
+            <div key={cat} className="border border-gray-100 rounded-lg overflow-hidden">
+              <button
+                onClick={() => toggleCat(cat)}
+                className="w-full flex items-center gap-2 px-3 py-2.5 bg-gray-50 hover:bg-gray-100 text-left"
+                aria-expanded={open}
+              >
+                <span
+                  className={`text-gray-400 transition-transform ${
+                    open ? "rotate-90" : ""
+                  }`}
+                >
+                  ▸
+                </span>
+                <span className="flex-1 font-semibold text-gray-700 text-sm">
+                  {cat}
+                </span>
+                {attention > 0 && (
+                  <span className="text-xs bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">
+                    {attention} low
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">{list.length}</span>
+              </button>
+              {open && (
+              <ul className="space-y-1 px-2 py-2">
                 {list.map((item) =>
                   editingId === item.id ? (
                     <li
@@ -866,8 +905,10 @@ export default function InventoryList({
                   )
                 )}
               </ul>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
