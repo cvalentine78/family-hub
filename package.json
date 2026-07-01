@@ -9,13 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@capacitor-community/background-geolocation": "^1.2.26",
     "@capacitor/app": "^8.1.0",
     "@capacitor/browser": "^8.0.3",
     "@capacitor/core": "^8.4.1",
     "@capacitor/push-notifications": "^8.1.1",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",
+    "@transistorsoft/capacitor-background-geolocation": "^9.2.0",
     "@vis.gl/react-google-maps": "^1.8.3",
     "next": "16.2.9",
     "react": "19.2.4",

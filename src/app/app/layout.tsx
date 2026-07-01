@@ -48,11 +48,7 @@ export default async function AppLayout({
             familyId={family.id}
             userId={user.id}
           />
-          <NativeLocationSharer
-            enabled={shareLocation}
-            familyId={family.id}
-            userId={user.id}
-          />
+          <NativeLocationSharer enabled={shareLocation} />
           <LocationRefreshResponder
             enabled={shareLocation}
             familyId={family.id}

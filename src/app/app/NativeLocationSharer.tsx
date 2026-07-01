@@ -1,134 +1,91 @@
 "use client";
 
 import { useEffect } from "react";
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor } from "@capacitor/core";
 import { createClient } from "@/lib/supabase/client";
-import { MAX_ACCURACY_M } from "@/lib/location";
 
-// Minimal typings for @capacitor-community/background-geolocation.
-interface BgLocation {
-  latitude: number;
-  longitude: number;
-  accuracy: number;
-  time: number | null;
-}
-interface BgError {
-  code: "NOT_AUTHORIZED" | string;
-  message: string;
-}
-interface WatcherOptions {
-  backgroundMessage?: string;
-  backgroundTitle?: string;
-  requestPermissions?: boolean;
-  stale?: boolean;
-  distanceFilter?: number;
-}
-interface BackgroundGeolocationPlugin {
-  addWatcher(
-    options: WatcherOptions,
-    callback: (location?: BgLocation, error?: BgError) => void
-  ): Promise<string>;
-  removeWatcher(options: { id: string }): Promise<void>;
-  openSettings(): Promise<void>;
-}
+const INGEST_URL =
+  "https://ztnhzejjzvjgwxxmrzba.supabase.co/functions/v1/ingest-location";
 
-const BackgroundGeolocation = registerPlugin<BackgroundGeolocationPlugin>(
-  "BackgroundGeolocation"
-);
-
-// Native-only counterpart to LocationSharer. Inside the Capacitor Android
-// shell it runs an Android foreground service that keeps reporting the user's
-// location while the app is backgrounded or the screen is locked. On the web
-// (and in a normal browser) this renders nothing — LocationSharer handles that.
-export default function NativeLocationSharer({
-  enabled,
-  familyId,
-  userId,
-}: {
-  enabled: boolean;
-  familyId: string;
-  userId: string;
-}) {
+// Native-only background location, powered by the transistorsoft plugin. Its
+// foreground service captures fixes and uploads them to our ingest endpoint
+// from NATIVE code, with an on-device queue + retry. That means locations
+// arrive even when the app is backgrounded, the phone is busy with other apps,
+// or the app is killed — unlike the old WebView-JS upload that Android froze.
+// On the web this renders nothing (LocationSharer handles foreground sharing).
+export default function NativeLocationSharer({ enabled }: { enabled: boolean }) {
   useEffect(() => {
-    if (!Capacitor.isNativePlatform() || !enabled) return;
-
-    const supabase = createClient();
-    let watcherId: string | null = null;
+    if (!Capacitor.isNativePlatform()) return;
     let cancelled = false;
 
-    async function record(loc: BgLocation) {
-      // Drop imprecise fixes (indoor GPS / wifi / cell) before they pollute the
-      // map and trail with phantom jumps.
-      if (loc.accuracy != null && loc.accuracy > MAX_ACCURACY_M) return;
+    async function setup() {
+      const { default: BackgroundGeolocation } = await import(
+        "@transistorsoft/capacitor-background-geolocation"
+      );
 
-      const recordedAt = new Date(loc.time ?? Date.now()).toISOString();
+      // Sharing turned off: stop reporting and bail.
+      if (!enabled) {
+        await BackgroundGeolocation.stop().catch(() => {});
+        return;
+      }
 
-      // Supabase query builders are lazy PromiseLikes — the request is only
-      // sent when the builder is awaited (or .then()'d). These MUST be awaited
-      // or the writes never leave the device.
-      const [current, breadcrumb, seen] = await Promise.all([
-        // Current position (single row per user, drives the live map).
-        supabase.from("locations").upsert({
-          user_id: userId,
-          family_id: familyId,
-          lat: loc.latitude,
-          lng: loc.longitude,
-          accuracy: loc.accuracy,
-          updated_at: recordedAt,
-        }),
-        // Append-only breadcrumb (drives the trail / timeline view).
-        supabase.from("location_history").insert({
-          user_id: userId,
-          family_id: familyId,
-          lat: loc.latitude,
-          lng: loc.longitude,
-          accuracy: loc.accuracy,
-          recorded_at: recordedAt,
-        }),
-        // Keep "last seen" fresh even while backgrounded, so a moving phone
-        // still reads as recently active (the foreground Heartbeat is paused).
-        supabase.from("profiles").update({ last_seen: recordedAt }).eq("id", userId),
-      ]);
+      // Long-lived upload token; the server resolves user + family from it.
+      const supabase = createClient();
+      const { data: token, error } = await supabase.rpc(
+        "get_or_create_ingest_token"
+      );
+      if (error || !token) {
+        console.error("ingest token failed:", error?.message);
+        return;
+      }
+      if (cancelled) return;
 
-      if (current.error) console.error("locations upsert failed:", current.error.message);
-      if (breadcrumb.error) console.error("location_history insert failed:", breadcrumb.error.message);
-      if (seen.error) console.error("last_seen update failed:", seen.error.message);
+      const state = await BackgroundGeolocation.ready({
+        reset: true,
+        geolocation: {
+          desiredAccuracy: -1, // DesiredAccuracy.High
+          distanceFilter: 25, // meters of movement before a new fix
+          locationAuthorizationRequest: "Always",
+        },
+        app: {
+          stopOnTerminate: false, // keep running if the app is swiped away
+          startOnBoot: true, // resume after a phone reboot
+          notification: {
+            title: "Family Hub",
+            text: "Sharing your location with your family.",
+          },
+          backgroundPermissionRationale: {
+            title: "Allow Family Hub to access location in the background?",
+            message:
+              "So your family can see where you are even when the app is closed.",
+            positiveAction: "Allow",
+          },
+        },
+        // Upload from native code straight to our ingest endpoint.
+        http: {
+          url: INGEST_URL,
+          autoSync: true,
+          rootProperty: "location",
+          headers: { "x-ingest-token": token as string },
+        },
+        persistence: {
+          locationTemplate:
+            '{"lat":<%= latitude %>,"lng":<%= longitude %>,"acc":<%= accuracy %>,"t":"<%= timestamp %>"}',
+        },
+      });
+
+      if (cancelled) return;
+      if (!state.enabled) {
+        await BackgroundGeolocation.start();
+      }
     }
 
-    BackgroundGeolocation.addWatcher(
-      {
-        backgroundTitle: "Family Hub",
-        backgroundMessage: "Sharing your location with your family.",
-        requestPermissions: true,
-        stale: false,
-        distanceFilter: 25, // meters of movement before a new fix (cuts indoor jitter)
-      },
-      (location, error) => {
-        if (error) {
-          console.error("BackgroundGeolocation watcher error:", error.code, error.message);
-          // User denied the permission — send them to settings to fix it.
-          if (error.code === "NOT_AUTHORIZED") BackgroundGeolocation.openSettings();
-          return;
-        }
-        if (location) {
-          void record(location);
-        }
-      }
-    )
-      .then((id) => {
-        if (cancelled) {
-          BackgroundGeolocation.removeWatcher({ id });
-        } else {
-          watcherId = id;
-        }
-      })
-      .catch((e) => console.error("addWatcher failed:", e));
+    void setup();
 
     return () => {
       cancelled = true;
-      if (watcherId) BackgroundGeolocation.removeWatcher({ id: watcherId });
     };
-  }, [enabled, familyId, userId]);
+  }, [enabled]);
 
   return null;
 }
