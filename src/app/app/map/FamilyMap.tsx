@@ -5,6 +5,7 @@ import {
   APIProvider,
   Map as GoogleMap,
   AdvancedMarker,
+  ControlPosition,
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
@@ -485,6 +486,10 @@ export default function FamilyMap({
             defaultZoom={zoom}
             gestureHandling="greedy"
             disableDefaultUI={false}
+            // Default bottom-right zoom control can end up under the mobile
+            // bottom nav bar; top-right is always clear of it.
+            zoomControlOptions={{ position: ControlPosition.RIGHT_TOP }}
+            fullscreenControlOptions={{ position: ControlPosition.RIGHT_TOP }}
             style={{ width: "100%", height: "70vh" }}
           >
             <MapKick />
