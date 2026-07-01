@@ -7,6 +7,9 @@ import {
   updateProjectStatus,
   updateProjectDetails,
   deleteProject,
+  addProjectTask,
+  toggleProjectTask,
+  deleteProjectTask,
 } from "../actions";
 
 export type Project = {
@@ -18,6 +21,15 @@ export type Project = {
   materials: string[];
   next_step: string | null;
   next_step_date: string | null;
+  created_by: string;
+  created_at: string;
+};
+
+export type ProjectTask = {
+  id: string;
+  project_id: string;
+  text: string;
+  is_checked: boolean;
   created_by: string;
   created_at: string;
 };
@@ -39,11 +51,14 @@ const STATUS_STYLE: Record<Project["status"], string> = {
 export default function ProjectsBoard({
   familyId,
   initialProjects,
+  initialTasks,
 }: {
   familyId: string;
   initialProjects: Project[];
+  initialTasks: ProjectTask[];
 }) {
   const [projects, setProjects] = useState<Project[]>(initialProjects);
+  const [tasks, setTasks] = useState<ProjectTask[]>(initialTasks);
   const [showArchived, setShowArchived] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [category, setCategory] = useState("");
@@ -69,6 +84,28 @@ export default function ProjectsBoard({
             const row = payload.new as Project;
             const exists = prev.some((p) => p.id === row.id);
             if (exists) return prev.map((p) => (p.id === row.id ? row : p));
+            return [...prev, row];
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "project_tasks",
+          filter: `family_id=eq.${familyId}`,
+        },
+        (payload) => {
+          setTasks((prev) => {
+            if (payload.eventType === "DELETE") {
+              return prev.filter(
+                (t) => t.id !== (payload.old as ProjectTask).id
+              );
+            }
+            const row = payload.new as ProjectTask;
+            const exists = prev.some((t) => t.id === row.id);
+            if (exists) return prev.map((t) => (t.id === row.id ? row : t));
             return [...prev, row];
           });
         }
@@ -162,7 +199,9 @@ export default function ProjectsBoard({
               {items.map((p) => (
                 <ProjectCard
                   key={p.id}
+                  familyId={familyId}
                   project={p}
+                  tasks={tasks.filter((t) => t.project_id === p.id)}
                   expanded={expanded === p.id}
                   onToggle={() =>
                     setExpanded((cur) => (cur === p.id ? null : p.id))
@@ -178,11 +217,15 @@ export default function ProjectsBoard({
 }
 
 function ProjectCard({
+  familyId,
   project,
+  tasks,
   expanded,
   onToggle,
 }: {
+  familyId: string;
   project: Project;
+  tasks: ProjectTask[];
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -238,6 +281,11 @@ function ProjectCard({
           >
             {STATUS_LABEL[project.status]}
           </span>
+          {tasks.length > 0 && (
+            <span className="text-xs text-gray-400">
+              {tasks.filter((t) => t.is_checked).length}/{tasks.length} tasks
+            </span>
+          )}
           {project.next_step && (
             <span className="text-xs text-gray-400 truncate">
               {project.next_step}
@@ -270,6 +318,8 @@ function ProjectCard({
               </button>
             ))}
           </div>
+
+          <Checklist familyId={familyId} projectId={project.id} tasks={tasks} />
 
           <div>
             <label className="block text-xs text-gray-400 mb-1">Notes</label>
@@ -336,6 +386,87 @@ function ProjectCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Checklist({
+  familyId,
+  projectId,
+  tasks,
+}: {
+  familyId: string;
+  projectId: string;
+  tasks: ProjectTask[];
+}) {
+  const [text, setText] = useState("");
+  const sorted = [...tasks].sort((a, b) =>
+    a.created_at.localeCompare(b.created_at)
+  );
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!text.trim()) return;
+    const t = text;
+    setText("");
+    await addProjectTask(familyId, projectId, t);
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-gray-400 mb-1">Checklist</label>
+      {sorted.length > 0 && (
+        <ul className="space-y-1 mb-2">
+          {sorted.map((task) => (
+            <li key={task.id} className="flex items-center gap-2 group">
+              <button
+                onClick={() => toggleProjectTask(task.id, !task.is_checked)}
+                className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center ${
+                  task.is_checked
+                    ? "bg-sky-600 border-sky-600 text-white"
+                    : "border-gray-300 hover:border-sky-500"
+                }`}
+                aria-label={task.is_checked ? "Mark not done" : "Mark done"}
+              >
+                {task.is_checked && (
+                  <span className="text-[10px] leading-none">✓</span>
+                )}
+              </button>
+              <span
+                className={`flex-1 text-sm ${
+                  task.is_checked
+                    ? "text-gray-400 line-through"
+                    : "text-gray-700"
+                }`}
+              >
+                {task.text}
+              </span>
+              <button
+                onClick={() => deleteProjectTask(task.id)}
+                className="text-gray-300 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label="Delete task"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={handleAdd} className="flex gap-2">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Add a task…"
+          className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        />
+        <button
+          type="submit"
+          disabled={!text.trim()}
+          className="text-xs bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 font-semibold px-3 py-1.5 rounded-lg"
+        >
+          Add
+        </button>
+      </form>
     </div>
   );
 }

@@ -906,3 +906,47 @@ export async function deleteProject(id: string) {
   if (error) return { error: error.message };
   return { success: true };
 }
+
+export async function addProjectTask(
+  familyId: string,
+  projectId: string,
+  text: string
+) {
+  const trimmed = text.trim();
+  if (!trimmed) return { error: "Enter a task." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { error } = await supabase.from("project_tasks").insert({
+    family_id: familyId,
+    project_id: projectId,
+    text: trimmed,
+    created_by: user.id,
+  });
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
+export async function toggleProjectTask(id: string, isChecked: boolean) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("project_tasks")
+    .update({ is_checked: isChecked })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
+export async function deleteProjectTask(id: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("project_tasks")
+    .delete()
+    .eq("id", id);
+  if (error) return { error: error.message };
+  return { success: true };
+}

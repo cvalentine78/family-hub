@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentFamily } from "@/lib/family";
 import Nav from "../Nav";
 import ProjectsBoard from "./ProjectsBoard";
-import type { Project } from "./ProjectsBoard";
+import type { Project, ProjectTask } from "./ProjectsBoard";
 
 export default async function ProjectsPage() {
   const supabase = await createClient();
@@ -22,6 +22,11 @@ export default async function ProjectsPage() {
     )
     .eq("family_id", family.id);
 
+  const { data: tasks } = await supabase
+    .from("project_tasks")
+    .select("id, project_id, text, is_checked, created_by, created_at")
+    .eq("family_id", family.id);
+
   return (
     <div className="max-w-[1320px] mx-auto px-4 py-6">
       <div className="flex items-center justify-between mb-4">
@@ -35,6 +40,7 @@ export default async function ProjectsPage() {
       <ProjectsBoard
         familyId={family.id}
         initialProjects={(projects as Project[]) ?? []}
+        initialTasks={(tasks as ProjectTask[]) ?? []}
       />
     </div>
   );
