@@ -456,24 +456,11 @@ export default function FamilyMap({
             {mode === "live" ? (
               <>
                 <FitBounds locs={locArray} />
-                {locArray.map((loc) => {
-                  const m = memberById.get(loc.user_id);
-                  const name = m?.display_name ?? "Member";
-                  return (
-                    <AdvancedMarker
-                      key={loc.user_id}
-                      position={{ lat: loc.lat, lng: loc.lng }}
-                      title={`${name} · ${timeAgo(loc.updated_at)}`}
-                    >
-                      <div className="flex flex-col items-center">
-                        <MemberPin member={m} name={name} />
-                        <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
-                          {loc.user_id === currentUserId ? "You" : name}
-                        </span>
-                      </div>
-                    </AdvancedMarker>
-                  );
-                })}
+                <LiveMarkers
+                  locs={locArray}
+                  memberById={memberById}
+                  currentUserId={currentUserId}
+                />
               </>
             ) : (
               <HistoryTrail
@@ -541,6 +528,47 @@ function MapKick() {
     };
   }, [map]);
   return null;
+}
+
+// Live-mode avatar markers. Tapping one zooms/pans the map to that person.
+function LiveMarkers({
+  locs,
+  memberById,
+  currentUserId,
+}: {
+  locs: Loc[];
+  memberById: Map<string, Member>;
+  currentUserId: string;
+}) {
+  const map = useMap();
+
+  return (
+    <>
+      {locs.map((loc) => {
+        const m = memberById.get(loc.user_id);
+        const name = m?.display_name ?? "Member";
+        return (
+          <AdvancedMarker
+            key={loc.user_id}
+            position={{ lat: loc.lat, lng: loc.lng }}
+            title={`${name} · ${timeAgo(loc.updated_at)}`}
+            onClick={() => {
+              if (!map) return;
+              map.panTo({ lat: loc.lat, lng: loc.lng });
+              map.setZoom(18);
+            }}
+          >
+            <div className="flex flex-col items-center cursor-pointer">
+              <MemberPin member={m} name={name} />
+              <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
+                {loc.user_id === currentUserId ? "You" : name}
+              </span>
+            </div>
+          </AdvancedMarker>
+        );
+      })}
+    </>
+  );
 }
 
 // Auto-fits the map so every shared location is visible. One person → a close
