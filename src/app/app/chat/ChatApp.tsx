@@ -123,6 +123,14 @@ export default function ChatApp({
   useEffect(() => {
     listOpenRef.current = listOpen;
   }, [listOpen]);
+  // Whether we've already run the message-load effect once — lets it skip
+  // re-fetching the very first conversation (we already have its messages
+  // from the server) while still fetching fresh on later switches.
+  const loadedInitialRef = useRef(false);
+  // Which conversation the last "landing" scroll was for, so switching
+  // conversations (or the initial mount) jumps straight to the bottom
+  // instead of visibly animating up from wherever the div happened to start.
+  const landedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (initialSelected.type === "direct" && initialSelected.otherId) {
       convToOther.current.set(initialSelected.id, initialSelected.otherId);
@@ -183,7 +191,16 @@ export default function ChatApp({
         .eq("conversation_id", selected.id);
       if (active) setReads(data ?? []);
     }
-    load();
+    // Skip the redundant re-fetch for the conversation we already have
+    // server-rendered messages for — it briefly swapped the list for a
+    // "Loading…" placeholder (collapsing the scroll position) then snapped
+    // back, which showed as a flash to the top right after a notification
+    // deep-link. Only fetch fresh when actually switching conversations.
+    if (loadedInitialRef.current) {
+      load();
+    } else {
+      loadedInitialRef.current = true;
+    }
     loadReads();
 
     const msgChannel = supabase
@@ -315,8 +332,13 @@ export default function ChatApp({
   }, [currentUserId, groupConversationId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    // Landing in a conversation (mount, or switching to a different one)
+    // jumps straight to the bottom; only a new message arriving while
+    // already viewing this conversation animates smoothly.
+    const isLanding = landedForRef.current !== selected.id;
+    bottomRef.current?.scrollIntoView({ behavior: isLanding ? "auto" : "smooth" });
+    landedForRef.current = selected.id;
+  }, [messages, selected.id]);
 
   function selectGroup() {
     setGroupUnread(false);
