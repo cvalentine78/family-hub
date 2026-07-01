@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import {
   sendMessage,
@@ -131,6 +132,92 @@ export default function ChatApp({
   // conversations (or the initial mount) jumps straight to the bottom
   // instead of visibly animating up from wherever the div happened to start.
   const landedForRef = useRef<string | null>(null);
+
+  // "X is typing" — ephemeral, not persisted, via a realtime broadcast
+  // channel per conversation (same pattern as the map's location-refresh
+  // broadcast). Other participants' user ids currently typing.
+  const [typingUsers, setTypingUsers] = useState<Set<string>>(new Set());
+  const typingChannelRef = useRef<RealtimeChannel | null>(null);
+  const lastTypingSentRef = useRef(0);
+  const stopTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-user auto-expire, in case a "stopped typing" broadcast is missed
+  // (e.g. the other person's app gets backgrounded mid-keystroke).
+  const typingExpireTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
+
+  useEffect(() => {
+    const supabase = createClient();
+    const timers = typingExpireTimersRef.current;
+    const channel = supabase
+      .channel(`typing:${selected.id}`)
+      .on("broadcast", { event: "typing" }, (msg) => {
+        const { userId, typing } = msg.payload as {
+          userId: string;
+          typing: boolean;
+        };
+        if (userId === currentUserId) return;
+
+        const existing = timers.get(userId);
+        if (existing) clearTimeout(existing);
+        timers.delete(userId);
+
+        if (typing) {
+          setTypingUsers((prev) => new Set(prev).add(userId));
+          timers.set(
+            userId,
+            setTimeout(() => {
+              setTypingUsers((prev) => {
+                const next = new Set(prev);
+                next.delete(userId);
+                return next;
+              });
+              timers.delete(userId);
+            }, 4000)
+          );
+        } else {
+          setTypingUsers((prev) => {
+            const next = new Set(prev);
+            next.delete(userId);
+            return next;
+          });
+        }
+      })
+      .subscribe();
+    typingChannelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      typingChannelRef.current = null;
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+      if (stopTypingTimerRef.current) clearTimeout(stopTypingTimerRef.current);
+      setTypingUsers(new Set()); // leaving this conversation clears its indicator
+    };
+  }, [selected.id, currentUserId]);
+
+  // Broadcasts "typing" at most once every 2s while the user types, and
+  // "stopped" 3s after they pause (or immediately on send).
+  function handleTextChange(value: string) {
+    setText(value);
+    const now = Date.now();
+    if (now - lastTypingSentRef.current > 2000) {
+      typingChannelRef.current?.send({
+        type: "broadcast",
+        event: "typing",
+        payload: { userId: currentUserId, typing: true },
+      });
+      lastTypingSentRef.current = now;
+    }
+    if (stopTypingTimerRef.current) clearTimeout(stopTypingTimerRef.current);
+    stopTypingTimerRef.current = setTimeout(() => {
+      typingChannelRef.current?.send({
+        type: "broadcast",
+        event: "typing",
+        payload: { userId: currentUserId, typing: false },
+      });
+    }, 3000);
+  }
   useEffect(() => {
     if (initialSelected.type === "direct" && initialSelected.otherId) {
       convToOther.current.set(initialSelected.id, initialSelected.otherId);
@@ -367,6 +454,13 @@ export default function ChatApp({
     setSending(true);
     setText("");
     setShowEmoji(false);
+
+    if (stopTypingTimerRef.current) clearTimeout(stopTypingTimerRef.current);
+    typingChannelRef.current?.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { userId: currentUserId, typing: false },
+    });
 
     const tempId = `temp-${Date.now()}`;
     setMessages((prev) => [
@@ -610,6 +704,36 @@ export default function ChatApp({
           <div ref={bottomRef} />
         </div>
 
+        {typingUsers.size > 0 && (
+          <div className="px-4 py-1 flex items-center gap-2 text-xs text-gray-400">
+            <span className="flex gap-0.5">
+              <span
+                className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+                style={{ animationDelay: "0ms" }}
+              />
+              <span
+                className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+                style={{ animationDelay: "150ms" }}
+              />
+              <span
+                className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+                style={{ animationDelay: "300ms" }}
+              />
+            </span>
+            <span>
+              {(() => {
+                const names = Array.from(typingUsers).map(
+                  (id) => memberById.get(id)?.display_name ?? "Someone"
+                );
+                if (names.length === 1) return `${names[0]} is typing`;
+                if (names.length === 2)
+                  return `${names[0]} and ${names[1]} are typing`;
+                return `${names.length} people are typing`;
+              })()}
+            </span>
+          </div>
+        )}
+
         {showEmoji && (
           <div className="border-t border-gray-100 p-2 grid grid-cols-10 gap-1">
             {EMOJIS.map((em) => (
@@ -643,7 +767,7 @@ export default function ChatApp({
           <input
             ref={inputRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => handleTextChange(e.target.value)}
             placeholder={`Message ${headerTitle}…`}
             className="flex-1 min-w-0 rounded-full border-2 border-gray-300 bg-gray-50 px-4 py-2 text-gray-900 outline-none focus:border-sky-500 focus:bg-white focus:ring-1 focus:ring-sky-500"
           />
