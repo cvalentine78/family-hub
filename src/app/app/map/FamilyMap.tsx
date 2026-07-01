@@ -452,6 +452,7 @@ export default function FamilyMap({
             disableDefaultUI={false}
             style={{ width: "100%", height: "70vh" }}
           >
+            <MapKick />
             {mode === "live" ? (
               <>
                 <FitBounds locs={locArray} />
@@ -518,6 +519,28 @@ function MemberPin({
       )}
     </div>
   );
+}
+
+// The base map tiles can render grey until the map gets a resize event —
+// common in the Android WebView, where the map paints before the container is
+// settled (toggling Map/Satellite is what forced it to redraw). Nudge it once
+// the map is ready, and again on the next frame, so tiles load on first view.
+function MapKick() {
+  const map = useMap();
+  useEffect(() => {
+    if (!map) return;
+    let raf = 0;
+    const kick = () => window.google?.maps?.event?.trigger(map, "resize");
+    const t = setTimeout(() => {
+      kick();
+      raf = requestAnimationFrame(kick);
+    }, 150);
+    return () => {
+      clearTimeout(t);
+      cancelAnimationFrame(raf);
+    };
+  }, [map]);
+  return null;
 }
 
 // Auto-fits the map so every shared location is visible. One person → a close
