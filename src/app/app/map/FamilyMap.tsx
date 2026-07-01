@@ -27,6 +27,19 @@ type Crumb = {
   recorded_at: string;
 };
 
+type Stop = {
+  lat: number;
+  lng: number;
+  arrived_at: string;
+  departed_at: string;
+  point_count: number;
+  ongoing: boolean;
+};
+
+// A stable id for the Map instance, so components outside it (StopsList) can
+// still control it via useMap(FAMILY_MAP_ID).
+const FAMILY_MAP_ID = "familyMap";
+
 type Mode = "live" | "history";
 type Range = "1h" | "today" | "24h" | "7d";
 
@@ -161,6 +174,7 @@ export default function FamilyMap({
   const [historyUserId, setHistoryUserId] = useState<string>(currentUserId);
   const [range, setRange] = useState<Range>("today");
   const [crumbs, setCrumbs] = useState<Crumb[]>([]);
+  const [stops, setStops] = useState<Stop[]>([]);
   // The selection the loaded crumbs belong to; while it lags the current
   // selection we're still fetching. Avoids a setState-in-effect loading flag.
   const [loadedKey, setLoadedKey] = useState<string>("");
@@ -265,27 +279,47 @@ export default function FamilyMap({
   const historyKey = `${familyId}|${historyUserId}|${range}`;
   const historyLoading = mode === "history" && loadedKey !== historyKey;
 
-  // Fetch the breadcrumb trail whenever the history selection changes.
+  // Fetch the breadcrumb trail + stops list whenever the history selection changes.
   useEffect(() => {
     if (mode !== "history") return;
     let cancelled = false;
     const supabase = createClient();
+    const since = cutoffFor(range);
+
     // Server-side trail: drops imprecise fixes and thins to ~1000 points across
     // the WHOLE window, so a full day isn't capped by PostgREST's 1000-row limit
     // (which had been dropping either the morning or the recent travel).
-    supabase
+    const trail = supabase
       .rpc("location_trail", {
         p_user: historyUserId,
         p_family: familyId,
-        p_since: cutoffFor(range),
+        p_since: since,
         p_max: 1000,
       })
       .then(({ data, error }) => {
         if (cancelled) return;
         if (error) console.error("location_trail failed:", error.message);
         setCrumbs((data as Crumb[]) ?? []);
-        setLoadedKey(historyKey);
       });
+
+    // Stops: places dwelled for a while, turning the raw trail into a
+    // human-readable "where were they, and for how long" timeline.
+    const stopsReq = supabase
+      .rpc("location_stops", {
+        p_user: historyUserId,
+        p_family: familyId,
+        p_since: since,
+      })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) console.error("location_stops failed:", error.message);
+        setStops((data as Stop[]) ?? []);
+      });
+
+    Promise.all([trail, stopsReq]).then(() => {
+      if (!cancelled) setLoadedKey(historyKey);
+    });
+
     return () => {
       cancelled = true;
     };
@@ -442,9 +476,10 @@ export default function FamilyMap({
         </p>
       )}
 
-      <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
-        <APIProvider apiKey={apiKey}>
+      <APIProvider apiKey={apiKey}>
+        <div className="rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
           <GoogleMap
+            id={FAMILY_MAP_ID}
             mapId="DEMO_MAP_ID"
             defaultCenter={center}
             defaultZoom={zoom}
@@ -474,8 +509,10 @@ export default function FamilyMap({
               />
             )}
           </GoogleMap>
-        </APIProvider>
-      </div>
+        </div>
+
+        {mode === "history" && <StopsList stops={stops} />}
+      </APIProvider>
     </div>
   );
 }
@@ -568,6 +605,86 @@ function LiveMarkers({
         );
       })}
     </>
+  );
+}
+
+// Session-lived cache: rounded "lat,lng" -> short address, so repeat stops at
+// the same place (home, work, day after day) don't re-geocode every time.
+const geocodeCache = new Map<string, string>();
+
+// Turns a full formatted address into a short "street, city" label.
+function shortAddress(formatted: string): string {
+  return formatted.split(", ").slice(0, 2).join(", ");
+}
+
+// Renders the History "stops" timeline: places dwelled for a while, each
+// reverse-geocoded to a short address, tap to zoom the map to that stop.
+// Lives inside the same APIProvider as the map but outside <Map>, and reaches
+// the map instance via its shared id so tapping a row can still control it.
+function StopsList({ stops }: { stops: Stop[] }) {
+  const map = useMap(FAMILY_MAP_ID);
+  const geocodingLib = useMapsLibrary("geocoding");
+  // Bumped to force a re-render once a geocode result lands in the module-level
+  // cache below (mutating that Map doesn't itself trigger React to re-render).
+  const [, bumpVersion] = useState(0);
+
+  useEffect(() => {
+    if (!geocodingLib) return;
+    const geocoder = new geocodingLib.Geocoder();
+    let cancelled = false;
+
+    stops.forEach((s) => {
+      const key = `${s.lat.toFixed(4)},${s.lng.toFixed(4)}`;
+      if (geocodeCache.has(key)) return;
+      geocoder.geocode({ location: { lat: s.lat, lng: s.lng } }, (results, status) => {
+        if (cancelled) return;
+        if (status === "OK" && results && results[0]) {
+          geocodeCache.set(key, shortAddress(results[0].formatted_address));
+          bumpVersion((n) => n + 1);
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stops, geocodingLib]);
+
+  if (stops.length === 0) return null;
+
+  return (
+    <div className="mt-3 bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-100 overflow-hidden">
+      {stops.map((s, i) => {
+        const key = `${s.lat.toFixed(4)},${s.lng.toFixed(4)}`;
+        const label = geocodeCache.get(key);
+        return (
+        <button
+          key={`${s.arrived_at}-${i}`}
+          onClick={() => {
+            if (!map) return;
+            map.panTo({ lat: s.lat, lng: s.lng });
+            map.setZoom(17);
+          }}
+          className="w-full flex items-center gap-3 p-3 text-left hover:bg-gray-50 transition-colors"
+        >
+          <div className="w-9 h-9 rounded-full bg-sky-50 flex items-center justify-center text-lg shrink-0">
+            📍
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-gray-800 truncate">
+              {label ?? `${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}`}
+            </p>
+            <p className="text-xs text-gray-500">
+              {shortTime(s.arrived_at)} – {s.ongoing ? "now" : shortTime(s.departed_at)}
+              {" · "}
+              {formatSpan(s.arrived_at, s.ongoing ? new Date().toISOString() : s.departed_at)}
+              {s.ongoing && " (ongoing)"}
+            </p>
+          </div>
+        </button>
+        );
+      })}
+    </div>
   );
 }
 
