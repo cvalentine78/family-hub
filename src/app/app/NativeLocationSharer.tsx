@@ -50,6 +50,7 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
         app: {
           stopOnTerminate: false, // keep running if the app is swiped away
           startOnBoot: true, // resume after a phone reboot
+          heartbeatInterval: 900, // fire a "still alive" check every 15 min while stationary
           notification: {
             title: "Family Hub",
             text: "Sharing your location with your family.",
@@ -73,6 +74,16 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
           locationTemplate:
             '{"lat":<%= latitude %>,"lng":<%= longitude %>,"acc":<%= accuracy %>,"t":"<%= timestamp %>"}',
         },
+      });
+
+      // While stationary, force a fresh GPS fix on each heartbeat and persist
+      // it, so a still-running tracker keeps reporting even with no movement
+      // (distinguishes "sitting still" from "tracking actually stopped").
+      BackgroundGeolocation.onHeartbeat(() => {
+        void BackgroundGeolocation.getCurrentPosition({
+          persist: true,
+          maximumAge: 0,
+        }).catch((e) => console.error("heartbeat getCurrentPosition failed:", e));
       });
 
       if (cancelled) return;
