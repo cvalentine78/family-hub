@@ -8,6 +8,7 @@ const TABS = [
   { href: "/app/calendar", label: "Calendar", icon: "📅" },
   { href: "/app/chat", label: "Chat", icon: "💬" },
   { href: "/app/groceries", label: "Groceries", icon: "🛒" },
+  { href: "/app/projects", label: "Projects", icon: "📌" },
   { href: "/app/map", label: "Map", icon: "📍" },
   { href: "/app/members", label: "Family", icon: "👨‍👩‍👧‍👦" },
 ];

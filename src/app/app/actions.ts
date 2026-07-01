@@ -839,3 +839,70 @@ export async function joinFamily(formData: FormData) {
   revalidatePath("/app");
   return { success: true };
 }
+
+// ----- Projects -----
+
+export async function addProject(
+  familyId: string,
+  category: string,
+  name: string
+) {
+  const text = name.trim();
+  if (!text) return { error: "Enter a project name." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { error } = await supabase.from("projects").insert({
+    family_id: familyId,
+    category: category.trim() || "Other",
+    name: text,
+    created_by: user.id,
+  });
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
+export async function updateProjectStatus(id: string, status: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
+export async function updateProjectDetails(
+  id: string,
+  fields: {
+    notes: string;
+    materials: string[];
+    next_step: string;
+    next_step_date: string | null;
+  }
+) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({
+      notes: fields.notes.trim() || null,
+      materials: fields.materials.map((m) => m.trim()).filter(Boolean),
+      next_step: fields.next_step.trim() || null,
+      next_step_date: fields.next_step_date || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+  return { success: true };
+}
+
+export async function deleteProject(id: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("projects").delete().eq("id", id);
+  if (error) return { error: error.message };
+  return { success: true };
+}
