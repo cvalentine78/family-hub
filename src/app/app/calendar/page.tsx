@@ -22,11 +22,23 @@ export default async function CalendarPage() {
   const { data } = await supabase
     .from("events")
     .select(
-      "id, title, description, location, starts_at, ends_at, all_day, recurrence, recurrence_until"
+      "id, title, description, location, starts_at, ends_at, all_day, recurrence, recurrence_until, event_reminders(minutes_before)"
     )
     .eq("family_id", family.id)
     .order("starts_at", { ascending: true });
-  const events = (data as EventRow[]) ?? [];
+  const events: EventRow[] = (
+    (data as (Omit<EventRow, "reminders"> & {
+      event_reminders: { minutes_before: number }[] | null;
+    })[]) ?? []
+  ).map((e) => {
+    const { event_reminders, ...rest } = e;
+    return {
+      ...rest,
+      reminders: (event_reminders ?? [])
+        .map((r) => r.minutes_before)
+        .sort((a, b) => a - b),
+    };
+  });
   const members: Member[] = await getFamilyMembers(family.id);
 
   return (

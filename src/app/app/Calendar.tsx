@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createEvent, deleteEvent } from "./actions";
+import { createEvent, updateEvent, deleteEvent } from "./actions";
 
 export type EventRow = {
   id: string;
@@ -14,6 +14,7 @@ export type EventRow = {
   all_day: boolean;
   recurrence: string; // none | daily | weekly | monthly | yearly
   recurrence_until: string | null; // YYYY-MM-DD
+  reminders: number[]; // minutes-before values
 };
 
 type View = "day" | "week" | "month";
@@ -87,6 +88,7 @@ export default function Calendar({
   const [cursor, setCursor] = useState(today); // reference date for the current view
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [formDay, setFormDay] = useState<Date | null>(null); // which day the add-form is open for
+  const [editingId, setEditingId] = useState<string | null>(null); // event being edited
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -170,6 +172,19 @@ export default function Calendar({
     }
   }
 
+  async function handleUpdate(formData: FormData) {
+    setSaving(true);
+    setError(null);
+    const result = await updateEvent(formData);
+    setSaving(false);
+    if (result?.error) {
+      setError(result.error);
+    } else {
+      setEditingId(null);
+      router.refresh();
+    }
+  }
+
   async function handleDelete(id: string) {
     const fd = new FormData();
     fd.set("id", id);
@@ -199,26 +214,42 @@ export default function Calendar({
     });
   }
 
-  function AddEventForm({ day }: { day: Date }) {
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0);
-    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 10, 0);
-    // Shared reminders for this event; default one at 30 min before.
-    const [reminders, setReminders] = useState<number[]>([30]);
+  function EventForm({ day, event }: { day: Date; event?: EventRow }) {
+    const isEdit = !!event;
+    const start = event
+      ? new Date(event.starts_at)
+      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0);
+    const end = event
+      ? new Date(event.ends_at)
+      : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 10, 0);
+    // Shared reminders for this event; default one at 30 min before for new events.
+    const [reminders, setReminders] = useState<number[]>(
+      event ? event.reminders : [30]
+    );
     function addReminder() {
       const used = new Set(reminders);
       const next = REMINDER_OPTIONS.find((o) => !used.has(o.value));
       if (next) setReminders([...reminders, next.value]);
     }
+    function closeForm() {
+      if (isEdit) setEditingId(null);
+      else setFormDay(null);
+    }
     return (
       <form
-        action={handleCreate}
+        action={isEdit ? handleUpdate : handleCreate}
         className="space-y-3 mt-3 bg-gray-50 rounded-xl p-3"
       >
-        <input type="hidden" name="family_id" value={familyId} />
+        {isEdit ? (
+          <input type="hidden" name="id" value={event.id} />
+        ) : (
+          <input type="hidden" name="family_id" value={familyId} />
+        )}
         <input
           name="title"
           required
           placeholder="Event title"
+          defaultValue={event?.title ?? ""}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none"
         />
         <div className="grid grid-cols-2 gap-2">
@@ -245,16 +276,18 @@ export default function Calendar({
         <input
           name="location"
           placeholder="Location (optional)"
+          defaultValue={event?.location ?? ""}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none"
         />
         <textarea
           name="description"
           placeholder="Notes (optional)"
           rows={2}
+          defaultValue={event?.description ?? ""}
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none"
         />
         <label className="flex items-center gap-2 text-sm text-gray-600">
-          <input type="checkbox" name="all_day" />
+          <input type="checkbox" name="all_day" defaultChecked={event?.all_day} />
           All day
         </label>
         <div className="grid grid-cols-2 gap-2">
@@ -262,7 +295,7 @@ export default function Calendar({
             Repeat
             <select
               name="recurrence"
-              defaultValue="none"
+              defaultValue={event?.recurrence ?? "none"}
               className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-sky-500 text-gray-700"
             >
               <option value="none">Does not repeat</option>
@@ -277,6 +310,7 @@ export default function Calendar({
             <input
               type="date"
               name="recurrence_until"
+              defaultValue={event?.recurrence_until ?? ""}
               className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-sky-500"
             />
           </label>
@@ -331,11 +365,11 @@ export default function Calendar({
             disabled={saving}
             className="flex-1 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-semibold py-2 rounded-lg text-sm"
           >
-            {saving ? "Saving…" : "Save event"}
+            {saving ? "Saving…" : isEdit ? "Save changes" : "Save event"}
           </button>
           <button
             type="button"
-            onClick={() => setFormDay(null)}
+            onClick={closeForm}
             className="px-4 text-sm text-gray-500 hover:text-gray-800"
           >
             Cancel
@@ -345,7 +379,14 @@ export default function Calendar({
     );
   }
 
-  function EventItem({ ev }: { ev: EventRow }) {
+  function EventItem({ ev, day }: { ev: EventRow; day: Date }) {
+    if (editingId === ev.id) {
+      return (
+        <li>
+          <EventForm day={day} event={ev} />
+        </li>
+      );
+    }
     return (
       <li className="flex items-start justify-between gap-2 bg-white border border-gray-100 rounded-lg p-3">
         <div>
@@ -367,13 +408,26 @@ export default function Calendar({
             <p className="text-xs text-gray-400 mt-1">{ev.description}</p>
           )}
         </div>
-        <button
-          onClick={() => handleDelete(ev.id)}
-          className="text-xs text-gray-400 hover:text-red-600"
-          aria-label="Delete event"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => {
+              setError(null);
+              setFormDay(null);
+              setEditingId(ev.id);
+            }}
+            className="text-xs text-gray-400 hover:text-sky-600"
+            aria-label="Edit event"
+          >
+            ✎
+          </button>
+          <button
+            onClick={() => handleDelete(ev.id)}
+            className="text-xs text-gray-400 hover:text-red-600"
+            aria-label="Delete event"
+          >
+            ✕
+          </button>
+        </div>
       </li>
     );
   }
@@ -489,14 +543,14 @@ export default function Calendar({
               </button>
             </div>
             {formDay && sameDay(formDay, selectedDay) && (
-              <AddEventForm day={selectedDay} />
+              <EventForm day={selectedDay} />
             )}
             {selectedEvents.length === 0 ? (
               <p className="text-sm text-gray-400 py-2">No events this day.</p>
             ) : (
               <ul className="space-y-2 mt-3">
                 {selectedEvents.map((ev) => (
-                  <EventItem key={ev.id} ev={ev} />
+                  <EventItem key={ev.id} ev={ev} day={selectedDay} />
                 ))}
               </ul>
             )}
@@ -548,11 +602,11 @@ export default function Calendar({
               {dayEvents.length > 0 && (
                 <ul className="space-y-2 mt-2">
                   {dayEvents.map((ev) => (
-                    <EventItem key={ev.id} ev={ev} />
+                    <EventItem key={ev.id} ev={ev} day={day} />
                   ))}
                 </ul>
               )}
-              {formDay && sameDay(formDay, day) && <AddEventForm day={day} />}
+              {formDay && sameDay(formDay, day) && <EventForm day={day} />}
             </div>
           );
         })}
@@ -577,13 +631,13 @@ export default function Calendar({
             + Add event
           </button>
         </div>
-        {formDay && sameDay(formDay, day) && <AddEventForm day={day} />}
+        {formDay && sameDay(formDay, day) && <EventForm day={day} />}
         {dayEvents.length === 0 ? (
           <p className="text-sm text-gray-400 py-2">No events this day.</p>
         ) : (
           <ul className="space-y-2 mt-3">
             {dayEvents.map((ev) => (
-              <EventItem key={ev.id} ev={ev} />
+              <EventItem key={ev.id} ev={ev} day={day} />
             ))}
           </ul>
         )}

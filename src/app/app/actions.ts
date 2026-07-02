@@ -96,6 +96,66 @@ export async function createEvent(formData: FormData) {
   return { success: true };
 }
 
+export async function updateEvent(formData: FormData) {
+  const id = String(formData.get("id") || "");
+  const title = String(formData.get("title") || "").trim();
+  const description = String(formData.get("description") || "").trim();
+  const location = String(formData.get("location") || "").trim();
+  const all_day = formData.get("all_day") === "on";
+  const starts_at = String(formData.get("starts_at") || "");
+  const ends_at = String(formData.get("ends_at") || "");
+  const recurrence = String(formData.get("recurrence") || "none");
+  const recurrence_until = String(formData.get("recurrence_until") || "");
+
+  if (!id) return { error: "Missing event." };
+  if (!title) return { error: "Please enter a title." };
+  if (!starts_at) return { error: "Please pick a start time." };
+
+  const validRecurrence = ["none", "daily", "weekly", "monthly", "yearly"];
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { error } = await supabase
+    .from("events")
+    .update({
+      title,
+      description: description || null,
+      location: location || null,
+      all_day,
+      starts_at: new Date(starts_at).toISOString(),
+      ends_at: new Date(ends_at || starts_at).toISOString(),
+      recurrence: validRecurrence.includes(recurrence) ? recurrence : "none",
+      recurrence_until:
+        recurrence !== "none" && recurrence_until ? recurrence_until : null,
+    })
+    .eq("id", id);
+
+  if (error) return { error: error.message };
+
+  // Replace the event's reminders with the submitted set.
+  const reminders = [
+    ...new Set(
+      formData
+        .getAll("reminders")
+        .map((v) => parseInt(String(v), 10))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n <= 40320) // <= 4 weeks
+    ),
+  ];
+  await supabase.from("event_reminders").delete().eq("event_id", id);
+  if (reminders.length) {
+    await supabase
+      .from("event_reminders")
+      .insert(reminders.map((m) => ({ event_id: id, minutes_before: m })));
+  }
+
+  revalidatePath("/app");
+  return { success: true };
+}
+
 export async function updateDisplayName(formData: FormData) {
   const display_name = String(formData.get("display_name") || "").trim();
   if (!display_name) return { error: "Please enter a name." };
