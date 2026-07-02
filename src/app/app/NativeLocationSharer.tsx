@@ -112,6 +112,11 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
       if (!state.enabled) {
         await BackgroundGeolocation.start();
       }
+      // After start(), the plugin sits in the STATIONARY state and won't begin
+      // time-based sampling until it detects motion. Nudge it into the moving/
+      // tracking state so sampling starts right away; disableStopDetection
+      // (activity config) then keeps it there even while the phone sits still.
+      await BackgroundGeolocation.changePace(true).catch(() => {});
     }
 
     void setup();
