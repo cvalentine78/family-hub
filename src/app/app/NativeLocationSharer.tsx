@@ -44,20 +44,30 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
         reset: true,
         geolocation: {
           desiredAccuracy: -1, // DesiredAccuracy.High
-          // Movement-based capture: a new fix after 25m of motion. Battery-
-          // friendly, and gives detailed drive trails. Stationary reporting is
-          // handled separately by the NATIVE headless heartbeat (enableHeadless
-          // below + BackgroundGeolocationHeadlessTask.java), which fires while
-          // the phone sits still even with the app backgrounded/terminated —
-          // where the JS onHeartbeat handler below can't run.
-          distanceFilter: 25,
+          // STOPGAP (2026-07-02): time-based capture instead of movement-based.
+          // The native service can't rely on the JS onHeartbeat below to sample
+          // while stationary — Android suspends the WebView's JS whenever the app
+          // is backgrounded, so a still phone stopped reporting entirely. Setting
+          // distanceFilter:0 makes the plugin sample on a NATIVE timer regardless
+          // of movement, and disableStopDetection keeps it from going dormant.
+          // Trade-off: more battery + a coarser movement trail. Being evaluated;
+          // the durable fix is a native headless task (blocked on plugin obfuscation).
+          distanceFilter: 0, // 0 = sample by time, not by 25m of movement
+          locationUpdateInterval: 180000, // ~3 min between fixes
+          fastestLocationUpdateInterval: 120000, // never faster than ~2 min
           locationAuthorizationRequest: "Always",
+        },
+        activity: {
+          // disableStopDetection lives in the ACTIVITY group, not geolocation
+          // (verified on-device: setting it under geolocation was silently
+          // dropped). Without it the plugin parks in the stationary state and
+          // stops sampling, so the time-based interval above never fires.
+          disableStopDetection: true,
         },
         app: {
           stopOnTerminate: false, // keep running if the app is swiped away
           startOnBoot: true, // resume after a phone reboot
-          enableHeadless: true, // deliver heartbeat (etc.) to the native headless task when JS is dead
-          heartbeatInterval: 60, // TEST VALUE (min allowed); set to 900 (15 min) for production once verified
+          heartbeatInterval: 900, // fire a "still alive" check every 15 min while stationary
           notification: {
             title: "Family Hub",
             text: "Sharing your location with your family.",
@@ -102,9 +112,11 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
       if (!state.enabled) {
         await BackgroundGeolocation.start();
       }
-      // No changePace here: we WANT the plugin to settle into the stationary
-      // state when the phone stops moving, because that's what triggers the
-      // heartbeat — which the native headless task turns into a persisted fix.
+      // After start(), the plugin sits in the STATIONARY state and won't begin
+      // time-based sampling until it detects motion. Nudge it into the moving/
+      // tracking state so sampling starts right away; disableStopDetection
+      // (activity config) then keeps it there even while the phone sits still.
+      await BackgroundGeolocation.changePace(true).catch(() => {});
     }
 
     void setup();
