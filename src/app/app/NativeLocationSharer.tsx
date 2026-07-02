@@ -44,7 +44,18 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
         reset: true,
         geolocation: {
           desiredAccuracy: -1, // DesiredAccuracy.High
-          distanceFilter: 25, // meters of movement before a new fix
+          // STOPGAP (2026-07-02): time-based capture instead of movement-based.
+          // The native service can't rely on the JS onHeartbeat below to sample
+          // while stationary — Android suspends the WebView's JS whenever the app
+          // is backgrounded, so a still phone stopped reporting entirely. Setting
+          // distanceFilter:0 makes the plugin sample on a NATIVE timer regardless
+          // of movement, and disableStopDetection keeps it from going dormant.
+          // Trade-off: more battery + a coarser movement trail. Being evaluated;
+          // the durable fix is a native headless task (blocked on plugin obfuscation).
+          distanceFilter: 0, // 0 = sample by time, not by 25m of movement
+          locationUpdateInterval: 180000, // ~3 min between fixes
+          fastestLocationUpdateInterval: 120000, // never faster than ~2 min
+          disableStopDetection: true, // don't stop sampling when stationary
           locationAuthorizationRequest: "Always",
         },
         app: {
