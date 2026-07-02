@@ -55,8 +55,14 @@ export default function NativeLocationSharer({ enabled }: { enabled: boolean }) 
           distanceFilter: 0, // 0 = sample by time, not by 25m of movement
           locationUpdateInterval: 180000, // ~3 min between fixes
           fastestLocationUpdateInterval: 120000, // never faster than ~2 min
-          disableStopDetection: true, // don't stop sampling when stationary
           locationAuthorizationRequest: "Always",
+        },
+        activity: {
+          // disableStopDetection lives in the ACTIVITY group, not geolocation
+          // (verified on-device: setting it under geolocation was silently
+          // dropped). Without it the plugin parks in the stationary state and
+          // stops sampling, so the time-based interval above never fires.
+          disableStopDetection: true,
         },
         app: {
           stopOnTerminate: false, // keep running if the app is swiped away
