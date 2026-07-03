@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   addGroceryItem,
   checkOffGroceryItem,
   deleteGroceryItem,
+  searchStoreProducts,
 } from "../actions";
+import type { KrogerProduct } from "@/lib/kroger";
 
 export type GroceryItem = {
   id: string;
@@ -16,6 +18,16 @@ export type GroceryItem = {
   is_checked: boolean;
   created_at: string;
 };
+
+// Split a Kroger package size like "16 fl oz" / "340 g" / "12 ct" into the
+// form's qty + unit fields, when the unit is one we already offer.
+function parseSize(size: string | null): { qty: string; unit: string } | null {
+  if (!size) return null;
+  const m = size.trim().match(/^(\d+(?:\.\d+)?)\s*(.+)$/);
+  if (!m) return null;
+  const unit = UNITS.find((u) => u && u.toLowerCase() === m[2].toLowerCase());
+  return unit ? { qty: m[1], unit } : null;
+}
 
 const UNITS = [
   "",
@@ -57,6 +69,49 @@ export default function ShoppingList({
   const [qty, setQty] = useState("");
   const [unit, setUnit] = useState("");
   const [movedMsg, setMovedMsg] = useState<string | null>(null);
+
+  // Live Kroger catalog results for the add box.
+  const [storeResults, setStoreResults] = useState<KrogerProduct[]>([]);
+  const [storeLoading, setStoreLoading] = useState(false);
+  const [nameFocused, setNameFocused] = useState(false);
+  const skipSearchRef = useRef(false); // picking a suggestion shouldn't re-search
+  const latestTermRef = useRef("");
+
+  useEffect(() => {
+    const q = name.trim();
+    latestTermRef.current = q;
+    if (skipSearchRef.current) {
+      skipSearchRef.current = false;
+      return;
+    }
+    if (q.length < 3) {
+      setStoreResults([]);
+      setStoreLoading(false);
+      return;
+    }
+    setStoreLoading(true);
+    const timer = setTimeout(async () => {
+      const results = await searchStoreProducts(q);
+      // Ignore stale responses from a slower earlier search.
+      if (latestTermRef.current === q) {
+        setStoreResults(results);
+        setStoreLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [name]);
+
+  function pickSuggestion(text: string, size: string | null = null) {
+    skipSearchRef.current = true;
+    setName(text);
+    const parsed = parseSize(size);
+    if (parsed) {
+      setQty(parsed.qty);
+      setUnit(parsed.unit);
+    }
+    setStoreResults([]);
+    setStoreLoading(false);
+  }
 
   useEffect(() => {
     const supabase = createClient();
@@ -115,21 +170,79 @@ export default function ShoppingList({
 
   const active = items.sort((a, b) => a.created_at.localeCompare(b.created_at));
 
+  // Merge instant home suggestions (inventory + ingredients) with live
+  // Kroger results in one dropdown. Nothing shows until you type; every
+  // typed word must appear somewhere in the item name, in any order.
+  const q = name.trim().toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  const localMatches = q
+    ? suggestions
+        .filter((s) => {
+          const lower = s.toLowerCase();
+          return lower !== q && words.every((w) => lower.includes(w));
+        })
+        .slice(0, 5)
+    : [];
+  const dropdownOpen =
+    nameFocused &&
+    q.length > 0 &&
+    (localMatches.length > 0 || storeResults.length > 0 || storeLoading);
+
   return (
     <div>
       <form onSubmit={handleAdd} className="flex flex-wrap gap-2 mb-4">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Add an item…"
-          list="grocery-suggestions"
-          className="w-full sm:w-auto sm:flex-1 min-w-0 rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-        />
-        <datalist id="grocery-suggestions">
-          {suggestions.map((s) => (
-            <option key={s} value={s} />
-          ))}
-        </datalist>
+        <div className="relative w-full sm:w-auto sm:flex-1 min-w-0">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onFocus={() => setNameFocused(true)}
+            onBlur={() => setNameFocused(false)}
+            placeholder="Add an item…"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+          />
+          {dropdownOpen && (
+            <div
+              className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto"
+              // Keep the input focused so option clicks land before blur.
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {localMatches.map((s) => (
+                <button
+                  key={`local-${s}`}
+                  type="button"
+                  onClick={() => pickSuggestion(s)}
+                  className="w-full text-left px-3 py-2 hover:bg-sky-50 text-sm text-gray-800"
+                >
+                  {s}
+                  <span className="text-gray-400 text-xs ml-2">from home</span>
+                </button>
+              ))}
+              {(storeResults.length > 0 || storeLoading) && (
+                <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 border-t border-gray-100 first:border-t-0">
+                  {storeLoading ? "Searching Kroger…" : "Kroger"}
+                </div>
+              )}
+              {storeResults.map((p, i) => (
+                <button
+                  key={`kroger-${i}`}
+                  type="button"
+                  onClick={() => pickSuggestion(p.name, p.size)}
+                  className="w-full text-left px-3 py-2 hover:bg-sky-50 text-sm"
+                >
+                  <span className="text-gray-800">{p.name}</span>
+                  <span className="text-gray-400 text-xs ml-2">
+                    {[
+                      p.size,
+                      p.price != null ? `$${p.price.toFixed(2)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <input
           value={qty}
           onChange={(e) => setQty(e.target.value)}

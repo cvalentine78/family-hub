@@ -2,6 +2,11 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { generateJoinCode } from "@/lib/family";
+import {
+  krogerConfigured,
+  searchKrogerCatalog,
+  type KrogerProduct,
+} from "@/lib/kroger";
 import { revalidatePath } from "next/cache";
 
 export async function createFamily(formData: FormData) {
@@ -276,6 +281,30 @@ export async function addGroceryItem(
   });
   if (error) return { error: error.message };
   return { success: true };
+}
+
+// Live product suggestions from the Kroger catalog for the shopping list's
+// add box. Signed-in family members only (protects our daily API quota).
+// Returns [] whenever Kroger isn't configured or the lookup fails, so the
+// list works fine without it.
+export async function searchStoreProducts(
+  term: string
+): Promise<KrogerProduct[]> {
+  const q = term.trim();
+  if (q.length < 3) return [];
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  if (!krogerConfigured()) return [];
+  try {
+    return await searchKrogerCatalog(q);
+  } catch {
+    return [];
+  }
 }
 
 export async function toggleGroceryItem(id: string, isChecked: boolean) {
