@@ -37,6 +37,22 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (!owner) return new Response("invalid token", { status: 401 });
 
+  // Honor the sharing toggle server-side. The phone-side stop() only runs if
+  // that device's WebView happens to execute it, so a tracker can keep
+  // uploading after the user opts out — without this check those fixes would
+  // silently repopulate the map. Return 200 so the device's queue drains
+  // instead of retrying the batch forever.
+  const { data: prof } = await admin
+    .from("profiles")
+    .select("share_location")
+    .eq("id", owner.user_id)
+    .maybeSingle();
+  if (!prof?.share_location) {
+    return new Response(JSON.stringify({ ok: true, written: 0, sharing: false }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const body = await req.json().catch(() => null);
   const raw = body?.location ?? body;
   const items = Array.isArray(raw) ? raw : raw ? [raw] : [];
