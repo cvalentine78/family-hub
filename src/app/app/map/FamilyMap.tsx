@@ -6,6 +6,7 @@ import {
   Map as GoogleMap,
   AdvancedMarker,
   ControlPosition,
+  InfoWindow,
   useMap,
   useMapsLibrary,
 } from "@vis.gl/react-google-maps";
@@ -42,14 +43,20 @@ type Stop = {
 const FAMILY_MAP_ID = "familyMap";
 
 type Mode = "live" | "history";
-type Range = "1h" | "today" | "24h" | "7d";
+type Range = "1h" | "today" | "24h" | "7d" | "30d" | "day";
 
 const RANGE_LABELS: Record<Range, string> = {
   "1h": "Last hour",
   today: "Today",
   "24h": "Last 24 hours",
   "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  day: "Pick a day / time…",
 };
+
+// History is purged after 30 days (nightly cron), so the day picker and the
+// widest range both stop there.
+const HISTORY_DAYS = 30;
 
 function timeAgo(iso: string) {
   const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -61,15 +68,48 @@ function timeAgo(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-// Start of the local day, or a fixed number of ms back, as an ISO string.
-function cutoffFor(range: Range): string {
+// A local calendar date as the YYYY-MM-DD string <input type="date"> uses.
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+// The [since, until) window for a range selection, as ISO instants. "day" is
+// a from/to time span on one local calendar day (defaults cover the whole
+// day); a "to" at or before "from" rolls past midnight into the next morning,
+// so "11 PM to 1 AM" works. Everything else ends now.
+function windowFor(
+  range: Range,
+  day: string,
+  fromTime: string,
+  toTime: string
+): { since: string; until: string } {
+  if (range === "day") {
+    const [y, m, d] = day.split("-").map(Number);
+    const [fh, fm] = fromTime.split(":").map(Number);
+    const [th, tm] = toTime.split(":").map(Number);
+    const since = new Date(y, m - 1, d, fh, fm);
+    // +1 minute makes the "to" minute inclusive (and turns the default 23:59
+    // into next-midnight, covering the full day).
+    const until = new Date(y, m - 1, toTime <= fromTime ? d + 1 : d, th, tm + 1);
+    return { since: since.toISOString(), until: until.toISOString() };
+  }
+  const until = new Date().toISOString();
   if (range === "today") {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
-    return d.toISOString();
+    return { since: d.toISOString(), until };
   }
-  const ms = range === "1h" ? 3_600_000 : range === "24h" ? 86_400_000 : 7 * 86_400_000;
-  return new Date(Date.now() - ms).toISOString();
+  const ms =
+    range === "1h"
+      ? 3_600_000
+      : range === "24h"
+      ? 86_400_000
+      : range === "7d"
+      ? 7 * 86_400_000
+      : HISTORY_DAYS * 86_400_000;
+  return { since: new Date(Date.now() - ms).toISOString(), until };
 }
 
 // Great-circle distance between two points, in meters.
@@ -104,6 +144,18 @@ function formatSpan(from: string, to: string): string {
 
 function shortTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+// Time with the day attached, for windows that can span several days
+// ("Tue, Jul 7, 2:34 PM").
+function fullTime(iso: string) {
+  return new Date(iso).toLocaleString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
@@ -174,6 +226,10 @@ export default function FamilyMap({
   const [mode, setMode] = useState<Mode>("live");
   const [historyUserId, setHistoryUserId] = useState<string>(currentUserId);
   const [range, setRange] = useState<Range>("today");
+  // The specific local day + time span shown when range is "day".
+  const [day, setDay] = useState<string>(() => localDateStr(new Date()));
+  const [fromTime, setFromTime] = useState<string>("00:00");
+  const [toTime, setToTime] = useState<string>("23:59");
   const [crumbs, setCrumbs] = useState<Crumb[]>([]);
   const [stops, setStops] = useState<Stop[]>([]);
   // The selection the loaded crumbs belong to; while it lags the current
@@ -277,7 +333,9 @@ export default function FamilyMap({
     };
   }, [familyId]);
 
-  const historyKey = `${familyId}|${historyUserId}|${range}`;
+  const historyKey = `${familyId}|${historyUserId}|${range}${
+    range === "day" ? `|${day}|${fromTime}|${toTime}` : ""
+  }`;
   const historyLoading = mode === "history" && loadedKey !== historyKey;
 
   // Fetch the breadcrumb trail + stops list whenever the history selection changes.
@@ -285,7 +343,7 @@ export default function FamilyMap({
     if (mode !== "history") return;
     let cancelled = false;
     const supabase = createClient();
-    const since = cutoffFor(range);
+    const { since, until } = windowFor(range, day, fromTime, toTime);
 
     // Server-side trail: drops imprecise fixes and thins to ~1000 points across
     // the WHOLE window, so a full day isn't capped by PostgREST's 1000-row limit
@@ -295,6 +353,7 @@ export default function FamilyMap({
         p_user: historyUserId,
         p_family: familyId,
         p_since: since,
+        p_until: until,
         p_max: 1000,
       })
       .then(({ data, error }) => {
@@ -310,6 +369,7 @@ export default function FamilyMap({
         p_user: historyUserId,
         p_family: familyId,
         p_since: since,
+        p_until: until,
       })
       .then(({ data, error }) => {
         if (cancelled) return;
@@ -324,7 +384,7 @@ export default function FamilyMap({
     return () => {
       cancelled = true;
     };
-  }, [mode, historyUserId, range, familyId, historyKey]);
+  }, [mode, historyUserId, range, day, fromTime, toTime, familyId, historyKey]);
 
   const locArray = Array.from(locations.values());
 
@@ -447,6 +507,47 @@ export default function FamilyMap({
                 ))}
               </select>
             </label>
+            {range === "day" && (
+              <>
+                <label className="flex flex-col text-xs font-medium text-gray-500">
+                  Day
+                  <input
+                    type="date"
+                    value={day}
+                    min={localDateStr(
+                      new Date(Date.now() - (HISTORY_DAYS - 1) * 86_400_000)
+                    )}
+                    max={localDateStr(new Date())}
+                    onChange={(e) => {
+                      if (e.target.value) setDay(e.target.value);
+                    }}
+                    className="mt-1 text-sm font-medium text-gray-800 bg-white border border-gray-200 rounded-lg px-2 py-1"
+                  />
+                </label>
+                <label className="flex flex-col text-xs font-medium text-gray-500">
+                  From
+                  <input
+                    type="time"
+                    value={fromTime}
+                    onChange={(e) => {
+                      if (e.target.value) setFromTime(e.target.value);
+                    }}
+                    className="mt-1 text-sm font-medium text-gray-800 bg-white border border-gray-200 rounded-lg px-2 py-1"
+                  />
+                </label>
+                <label className="flex flex-col text-xs font-medium text-gray-500">
+                  To
+                  <input
+                    type="time"
+                    value={toTime}
+                    onChange={(e) => {
+                      if (e.target.value) setToTime(e.target.value);
+                    }}
+                    className="mt-1 text-sm font-medium text-gray-800 bg-white border border-gray-200 rounded-lg px-2 py-1"
+                  />
+                </label>
+              </>
+            )}
           </div>
           <p className="text-sm text-gray-500">
             {historyLoading
@@ -737,6 +838,14 @@ function HistoryTrail({
 }) {
   const map = useMap();
   const mapsLib = useMapsLibrary("maps");
+  // The dot whose info bubble (address + time) is open, if any.
+  const [selected, setSelected] = useState<Crumb | null>(null);
+
+  // Close the bubble whenever the trail itself changes (different member,
+  // range, or day) — the old point may not even be on screen anymore.
+  useEffect(() => {
+    setSelected(null);
+  }, [crumbs]);
 
   // The polyline is drawn imperatively — this version of the library has no
   // declarative Polyline component.
@@ -778,10 +887,12 @@ function HistoryTrail({
 
   const start = crumbs[0];
   const end = crumbs[crumbs.length - 1];
-  // Skip endpoints; only show intermediate dots, and cap them so a long trail
-  // doesn't spawn a thousand markers.
-  const dots =
-    crumbs.length > 2 && crumbs.length <= 250 ? crumbs.slice(1, -1) : [];
+  // Skip endpoints; show intermediate dots, thinned to at most ~250 so a long
+  // trail doesn't spawn a thousand markers (every point still lives in the
+  // polyline — the dots are just the tappable samples).
+  const inner = crumbs.length > 2 ? crumbs.slice(1, -1) : [];
+  const step = Math.max(1, Math.ceil(inner.length / 250));
+  const dots = inner.filter((_, i) => i % step === 0);
 
   return (
     <>
@@ -790,8 +901,12 @@ function HistoryTrail({
           key={`${c.recorded_at}-${i}`}
           position={{ lat: c.lat, lng: c.lng }}
           title={shortTime(c.recorded_at)}
+          onClick={() => setSelected(c)}
         >
-          <div className="w-2.5 h-2.5 rounded-full bg-sky-500 border border-white shadow-sm" />
+          {/* Invisible padding widens the touch target past the tiny dot. */}
+          <div className="p-1.5 cursor-pointer">
+            <div className="w-2.5 h-2.5 rounded-full bg-sky-500 border border-white shadow-sm" />
+          </div>
         </AdvancedMarker>
       ))}
 
@@ -799,8 +914,9 @@ function HistoryTrail({
         <AdvancedMarker
           position={{ lat: start.lat, lng: start.lng }}
           title={`Start · ${shortTime(start.recorded_at)}`}
+          onClick={() => setSelected(start)}
         >
-          <div className="flex flex-col items-center">
+          <div className="flex flex-col items-center cursor-pointer">
             <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-white shadow-md" />
             <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
               Start · {shortTime(start.recorded_at)}
@@ -812,14 +928,68 @@ function HistoryTrail({
       <AdvancedMarker
         position={{ lat: end.lat, lng: end.lng }}
         title={`Latest · ${shortTime(end.recorded_at)}`}
+        onClick={() => setSelected(end)}
       >
-        <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center cursor-pointer">
           <MemberPin member={member} name={memberName} />
           <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
             {memberName} · {timeAgo(end.recorded_at)}
           </span>
         </div>
       </AdvancedMarker>
+
+      {selected && (
+        <InfoWindow
+          position={{ lat: selected.lat, lng: selected.lng }}
+          pixelOffset={[0, -8]}
+          onCloseClick={() => setSelected(null)}
+        >
+          <CrumbInfo crumb={selected} />
+        </InfoWindow>
+      )}
     </>
+  );
+}
+
+// The tap bubble for a breadcrumb dot: when it was recorded plus the
+// reverse-geocoded address (shared cache with the stops list, so tapping a dot
+// at a known stop is instant).
+function CrumbInfo({ crumb }: { crumb: Crumb }) {
+  const geocodingLib = useMapsLibrary("geocoding");
+  const key = `${crumb.lat.toFixed(4)},${crumb.lng.toFixed(4)}`;
+  const [address, setAddress] = useState<string | null>(
+    () => geocodeCache.get(key) ?? null
+  );
+
+  useEffect(() => {
+    const cached = geocodeCache.get(key);
+    setAddress(cached ?? null);
+    if (cached || !geocodingLib) return;
+    let cancelled = false;
+    new geocodingLib.Geocoder().geocode(
+      { location: { lat: crumb.lat, lng: crumb.lng } },
+      (results, status) => {
+        if (cancelled) return;
+        if (status === "OK" && results && results[0]) {
+          const short = shortAddress(results[0].formatted_address);
+          geocodeCache.set(key, short);
+          setAddress(short);
+        } else {
+          setAddress(`${crumb.lat.toFixed(4)}, ${crumb.lng.toFixed(4)}`);
+        }
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [key, geocodingLib, crumb.lat, crumb.lng]);
+
+  return (
+    <div className="text-sm pr-1">
+      <p className="font-medium text-gray-800">
+        {address ?? "Looking up address…"}
+      </p>
+      <p className="text-gray-500 mt-0.5">{fullTime(crumb.recorded_at)}</p>
+    </div>
   );
 }
