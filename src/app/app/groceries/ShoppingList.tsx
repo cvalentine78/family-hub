@@ -15,9 +15,20 @@ export type GroceryItem = {
   name: string;
   quantity: string | null;
   unit: string | null;
+  price: number | null;
   is_checked: boolean;
   created_at: string;
 };
+
+// Parse a leading whole number out of a free-text quantity ("2 gallons" -> 2).
+// Mirrors actions.ts's server-side parseQuantity (not imported — that one's
+// not exported, and this only needs to run client-side for the total).
+function parseQuantity(q: string | null): number {
+  if (!q) return 1;
+  const m = q.match(/\d+/);
+  const n = m ? parseInt(m[0], 10) : 1;
+  return n > 0 ? n : 1;
+}
 
 // Split a Kroger package size like "16 fl oz" / "340 g" / "12 ct" into the
 // form's qty + unit fields, when the unit is one we already offer.
@@ -68,6 +79,7 @@ export default function ShoppingList({
   const [name, setName] = useState("");
   const [qty, setQty] = useState("");
   const [unit, setUnit] = useState("");
+  const [price, setPrice] = useState<number | null>(null);
   const [movedMsg, setMovedMsg] = useState<string | null>(null);
 
   // Live Kroger catalog results for the add box.
@@ -101,7 +113,11 @@ export default function ShoppingList({
     return () => clearTimeout(timer);
   }, [name]);
 
-  function pickSuggestion(text: string, size: string | null = null) {
+  function pickSuggestion(
+    text: string,
+    size: string | null = null,
+    price: number | null = null
+  ) {
     skipSearchRef.current = true;
     setName(text);
     const parsed = parseSize(size);
@@ -109,6 +125,7 @@ export default function ShoppingList({
       setQty(parsed.qty);
       setUnit(parsed.unit);
     }
+    setPrice(price);
     setStoreResults([]);
     setStoreLoading(false);
   }
@@ -149,10 +166,12 @@ export default function ShoppingList({
     const n = name;
     const q = qty;
     const u = unit;
+    const p = price;
     setName("");
     setQty("");
     setUnit("");
-    await addGroceryItem(familyId, n, q, u);
+    setPrice(null);
+    await addGroceryItem(familyId, n, q, u, p);
   }
 
   // Checking an item = bought it: moves to inventory and off the list.
@@ -169,6 +188,14 @@ export default function ShoppingList({
   }
 
   const active = items.sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  // Estimated total across items with a known store price (Kroger picks only —
+  // manually-typed items have no price and aren't part of this sum).
+  const pricedItems = active.filter((item) => item.price != null);
+  const estimatedTotal = pricedItems.reduce(
+    (sum, item) => sum + item.price! * parseQuantity(item.quantity),
+    0
+  );
 
   // Merge instant home suggestions (inventory + ingredients) with live
   // Kroger results in one dropdown. Nothing shows until you type; every
@@ -226,7 +253,7 @@ export default function ShoppingList({
                 <button
                   key={`kroger-${i}`}
                   type="button"
-                  onClick={() => pickSuggestion(p.name, p.size)}
+                  onClick={() => pickSuggestion(p.name, p.size, p.price)}
                   className="w-full text-left px-3 py-2 hover:bg-sky-50 text-sm"
                 >
                   <span className="text-gray-800">{p.name}</span>
@@ -273,6 +300,13 @@ export default function ShoppingList({
 
       {movedMsg && <p className="text-sm text-green-600 mb-3">{movedMsg} ✓</p>}
 
+      {pricedItems.length > 0 && (
+        <p className="text-sm text-gray-600 mb-3">
+          Est. total: <span className="font-semibold">${estimatedTotal.toFixed(2)}</span>{" "}
+          <span className="text-gray-400 text-xs">(priced items only)</span>
+        </p>
+      )}
+
       {active.length === 0 ? (
         <p className="text-center text-gray-400 py-10">
           Your shopping list is empty. Add something above! 🛒
@@ -296,9 +330,15 @@ export default function ShoppingList({
               </button>
               <span className="flex-1 text-gray-800">
                 {item.name}
-                {(item.quantity || item.unit) && (
+                {(item.quantity || item.unit || item.price != null) && (
                   <span className="text-gray-400 text-sm ml-2">
-                    {[item.quantity, item.unit].filter(Boolean).join(" ")}
+                    {[
+                      item.quantity,
+                      item.unit,
+                      item.price != null ? `$${item.price.toFixed(2)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                   </span>
                 )}
               </span>
