@@ -350,29 +350,14 @@ export async function checkOffGroceryItem(id: string) {
 
   const amount = parseQuantity(item.quantity);
 
-  // Merge into an existing inventory item of the same name, else create one.
-  const { data: existing } = await supabase
-    .from("inventory_items")
-    .select("id, quantity")
-    .eq("family_id", item.family_id)
-    .ilike("name", item.name)
-    .maybeSingle();
-
-  if (existing) {
-    await supabase
-      .from("inventory_items")
-      .update({
-        quantity: existing.quantity + amount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", existing.id);
-  } else {
-    await supabase.from("inventory_items").insert({
-      family_id: item.family_id,
-      name: item.name,
-      quantity: amount,
-    });
-  }
+  // Atomic upsert-with-guard: single INSERT ... ON CONFLICT DO UPDATE against
+  // the (family_id, lower(name)) unique index, so two concurrent checkoffs of
+  // the same item name can't each miss the other's in-flight row.
+  await supabase.rpc("upsert_inventory_on_checkoff", {
+    p_family_id: item.family_id,
+    p_name: item.name,
+    p_amount: amount,
+  });
 
   await supabase.from("grocery_items").delete().eq("id", id);
   return { success: true };
@@ -428,18 +413,13 @@ async function autoListIfLow(
   if (!item) return;
   if (item.quantity > item.threshold) return;
 
-  const { data: existing } = await supabase
-    .from("grocery_items")
-    .select("id")
-    .eq("family_id", item.family_id)
-    .ilike("name", item.name)
-    .maybeSingle();
-  if (existing) return;
-
-  await supabase.from("grocery_items").insert({
-    family_id: item.family_id,
-    name: item.name,
-    added_by: userId,
+  // Atomic upsert-with-guard: single INSERT ... ON CONFLICT DO NOTHING against
+  // the (family_id, lower(name)) unique index, so two concurrent low-stock
+  // triggers for the same item name can't both insert a duplicate.
+  await supabase.rpc("insert_grocery_item_if_missing", {
+    p_family_id: item.family_id,
+    p_name: item.name,
+    p_added_by: userId,
   });
 }
 
@@ -521,20 +501,12 @@ export async function linkScanToItem(
       .insert({ family_id: familyId, barcode: code, item_id: itemId });
   }
 
-  const { data: item } = await supabase
-    .from("inventory_items")
-    .select("quantity")
-    .eq("id", itemId)
-    .maybeSingle();
-  if (item) {
-    await supabase
-      .from("inventory_items")
-      .update({
-        quantity: item.quantity + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", itemId);
-  }
+  // Atomic single UPDATE ... SET quantity = quantity + 1, so two concurrent
+  // scans of the same item can't both read the same stale quantity.
+  await supabase.rpc("increment_inventory_quantity", {
+    p_item_id: itemId,
+    p_delta: 1,
+  });
   return { success: true };
 }
 

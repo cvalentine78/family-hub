@@ -93,15 +93,17 @@ Deno.serve(async (req) => {
   const { error: histErr } = await admin.from("location_history").insert(rows);
   if (histErr) console.error("location_history insert failed:", histErr.message);
 
-  // Current position = newest fix in this batch.
+  // Current position = newest fix in this batch. Guarded upsert (only applies
+  // if this fix is newer than what's stored) so a late-arriving stale batch
+  // can never regress a fresher live dot.
   const newest = rows.reduce((a, b) => (a.recorded_at >= b.recorded_at ? a : b));
-  const { error: locErr } = await admin.from("locations").upsert({
-    user_id: owner.user_id,
-    family_id: owner.family_id,
-    lat: newest.lat,
-    lng: newest.lng,
-    accuracy: newest.accuracy,
-    updated_at: newest.recorded_at,
+  const { error: locErr } = await admin.rpc("upsert_location_if_newer", {
+    p_user_id: owner.user_id,
+    p_family_id: owner.family_id,
+    p_lat: newest.lat,
+    p_lng: newest.lng,
+    p_accuracy: newest.accuracy,
+    p_updated_at: newest.recorded_at,
   });
   if (locErr) console.error("locations upsert failed:", locErr.message);
 
