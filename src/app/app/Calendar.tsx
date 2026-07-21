@@ -469,6 +469,36 @@ export default function Calendar({
   const [editingId, setEditingId] = useState<string | null>(null); // event being edited
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+
+  // Search over the flat events list, NOT eventsByDay — that map expands a
+  // recurring event into up to 800 grid occurrences, which would otherwise
+  // show one weekly event as dozens of near-duplicate results. One flat
+  // event = one search result, even if it recurs.
+  const searchQuery = search.trim().toLowerCase();
+  const searchResults = searchQuery
+    ? events
+        .filter((ev) =>
+          [ev.title, ev.description, ev.location]
+            .filter(Boolean)
+            .some((f) => f!.toLowerCase().includes(searchQuery))
+        )
+        .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+    : [];
+
+  // Jump to a search result's day. Uses the event's original starts_at, even
+  // for a recurring event — this intentionally does not try to resolve "the
+  // next occurrence"; a past-looking date for an ongoing recurring event is
+  // an accepted simplification, not a bug.
+  function jumpToEvent(ev: EventRow) {
+    const d = new Date(ev.starts_at);
+    setView("day");
+    setCursor(d);
+    setSelectedDay(d);
+    setFormDay(null);
+    setEditingId(null);
+    setSearch("");
+  }
 
   // Group events by local day key, expanding recurring events into their
   // occurrences within a bounded horizon.
@@ -897,32 +927,78 @@ export default function Calendar({
         </button>
       </div>
 
-      {/* Navigation header */}
-      <div className="flex items-center justify-between px-4 py-3">
-        <button
-          onClick={() => navigate(-1)}
-          className="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-500"
-          aria-label="Previous"
-        >
-          ‹
-        </button>
-        <h2 className="font-semibold text-gray-800 text-center">{headerLabel}</h2>
-        <button
-          onClick={() => navigate(1)}
-          className="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-500"
-          aria-label="Next"
-        >
-          ›
-        </button>
+      {/* Search */}
+      <div className="px-4 pt-3">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search events…"
+          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+        />
       </div>
 
-      <div className="border-t border-gray-100">
-        {/* Called as functions (not <MonthView/>) so they don't introduce a
-            component boundary that would remount EventForm on every render. */}
-        {view === "month" && MonthView()}
-        {view === "week" && WeekView()}
-        {view === "day" && DayView()}
-      </div>
+      {searchQuery ? (
+        <div className="border-t border-gray-100 mt-3 max-h-[60vh] overflow-y-auto divide-y divide-gray-50">
+          {searchResults.length === 0 ? (
+            <p className="text-sm text-gray-400 py-6 text-center px-4">
+              No events match "{search.trim()}".
+            </p>
+          ) : (
+            searchResults.map((ev) => (
+              <button
+                key={ev.id}
+                onClick={() => jumpToEvent(ev)}
+                className="w-full text-left px-4 py-3 hover:bg-sky-50 transition-colors"
+              >
+                <p className="font-medium text-gray-800 text-sm">
+                  {ev.title}
+                  {ev.recurrence && ev.recurrence !== "none" && (
+                    <span className="ml-1.5 text-xs text-gray-400">↻ repeats</span>
+                  )}
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {new Date(ev.starts_at).toLocaleDateString([], {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  {ev.location ? ` · ${ev.location}` : ""}
+                </p>
+              </button>
+            ))
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Navigation header */}
+          <div className="flex items-center justify-between px-4 py-3">
+            <button
+              onClick={() => navigate(-1)}
+              className="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-500"
+              aria-label="Previous"
+            >
+              ‹
+            </button>
+            <h2 className="font-semibold text-gray-800 text-center">{headerLabel}</h2>
+            <button
+              onClick={() => navigate(1)}
+              className="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-500"
+              aria-label="Next"
+            >
+              ›
+            </button>
+          </div>
+
+          <div className="border-t border-gray-100">
+            {/* Called as functions (not <MonthView/>) so they don't introduce a
+                component boundary that would remount EventForm on every render. */}
+            {view === "month" && MonthView()}
+            {view === "week" && WeekView()}
+            {view === "day" && DayView()}
+          </div>
+        </>
+      )}
     </div>
   );
 }
