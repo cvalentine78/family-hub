@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createEvent, updateEvent, deleteEvent } from "./actions";
+import Avatar from "./members/Avatar";
+import type { Member } from "@/lib/family";
 
 export type EventRow = {
   id: string;
@@ -15,6 +17,7 @@ export type EventRow = {
   recurrence: string; // none | daily | weekly | monthly | yearly
   recurrence_until: string | null; // YYYY-MM-DD
   reminders: number[]; // minutes-before values
+  attendees: string[]; // user_ids; empty = everyone
 };
 
 type View = "day" | "week" | "month";
@@ -118,6 +121,7 @@ function EventForm({
   day,
   event,
   familyId,
+  members,
   saving,
   error,
   onSubmit,
@@ -126,6 +130,7 @@ function EventForm({
   day: Date;
   event?: EventRow;
   familyId: string;
+  members: Member[];
   saving: boolean;
   error: string | null;
   onSubmit: (formData: FormData) => void;
@@ -146,6 +151,19 @@ function EventForm({
     const used = new Set(reminders);
     const next = REMINDER_OPTIONS.find((o) => !used.has(o.value));
     if (next) setReminders([...reminders, next.value]);
+  }
+  // Who this event is for, informational only. Empty = everyone (the
+  // default) and must STAY empty rather than becoming one row per current
+  // member — see actions.ts for why.
+  const [attendees, setAttendees] = useState<string[]>(
+    event ? event.attendees : []
+  );
+  function toggleAttendee(userId: string) {
+    setAttendees(
+      attendees.includes(userId)
+        ? attendees.filter((id) => id !== userId)
+        : [...attendees, userId]
+    );
   }
   return (
     <form
@@ -275,6 +293,43 @@ function EventForm({
           </button>
         )}
       </div>
+      <div className="space-y-1.5">
+        <span className="text-xs text-gray-500">👤 For</span>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => setAttendees([])}
+            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+              attendees.length === 0
+                ? "bg-sky-600 text-white border-sky-600"
+                : "bg-white text-gray-600 border-gray-300 hover:border-sky-400"
+            }`}
+          >
+            Everyone
+          </button>
+          {members.map((m) => {
+            const checked = attendees.includes(m.user_id);
+            return (
+              <button
+                key={m.user_id}
+                type="button"
+                onClick={() => toggleAttendee(m.user_id)}
+                className={`flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  checked
+                    ? "bg-sky-600 text-white border-sky-600"
+                    : "bg-white text-gray-600 border-gray-300 hover:border-sky-400"
+                }`}
+              >
+                <Avatar name={m.display_name} url={m.avatar_url} size={18} />
+                {m.display_name}
+              </button>
+            );
+          })}
+        </div>
+        {attendees.map((id) => (
+          <input key={id} type="hidden" name="attendees" value={id} />
+        ))}
+      </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex gap-2">
         <button
@@ -303,6 +358,7 @@ function EventItem({
   day,
   isEditing,
   familyId,
+  members,
   saving,
   error,
   onEdit,
@@ -314,6 +370,7 @@ function EventItem({
   day: Date;
   isEditing: boolean;
   familyId: string;
+  members: Member[];
   saving: boolean;
   error: string | null;
   onEdit: (id: string) => void;
@@ -328,6 +385,7 @@ function EventItem({
           day={day}
           event={ev}
           familyId={familyId}
+          members={members}
           saving={saving}
           error={error}
           onSubmit={onUpdate}
@@ -336,6 +394,9 @@ function EventItem({
       </li>
     );
   }
+  const attendeeMembers = ev.attendees
+    .map((uid) => members.find((m) => m.user_id === uid))
+    .filter((m): m is Member => !!m);
   return (
     <li className="flex items-start justify-between gap-2 bg-white border border-gray-100 rounded-lg p-3">
       <div>
@@ -355,6 +416,19 @@ function EventItem({
         </p>
         {ev.description && (
           <p className="text-xs text-gray-400 mt-1">{ev.description}</p>
+        )}
+        {attendeeMembers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+            {attendeeMembers.map((m) => (
+              <span
+                key={m.user_id}
+                className="flex items-center gap-1 bg-sky-50 text-sky-700 text-[10px] font-medium pl-0.5 pr-1.5 py-0.5 rounded-full"
+              >
+                <Avatar name={m.display_name} url={m.avatar_url} size={14} />
+                {m.display_name}
+              </span>
+            ))}
+          </div>
         )}
       </div>
       <div className="flex items-center gap-1 shrink-0">
@@ -380,9 +454,11 @@ function EventItem({
 export default function Calendar({
   familyId,
   events,
+  members,
 }: {
   familyId: string;
   events: EventRow[];
+  members: Member[];
 }) {
   const router = useRouter();
   const today = new Date();
@@ -630,6 +706,7 @@ export default function Calendar({
               <EventForm
                 day={selectedDay}
                 familyId={familyId}
+                members={members}
                 saving={saving}
                 error={error}
                 onSubmit={handleCreate}
@@ -647,6 +724,7 @@ export default function Calendar({
                     day={selectedDay}
                     isEditing={editingId === ev.id}
                     familyId={familyId}
+                    members={members}
                     saving={saving}
                     error={error}
                     onEdit={handleEdit}
@@ -711,6 +789,7 @@ export default function Calendar({
                       day={day}
                       isEditing={editingId === ev.id}
                       familyId={familyId}
+                      members={members}
                       saving={saving}
                       error={error}
                       onEdit={handleEdit}
@@ -725,6 +804,7 @@ export default function Calendar({
         <EventForm
           day={day}
           familyId={familyId}
+          members={members}
           saving={saving}
           error={error}
           onSubmit={handleCreate}
@@ -759,6 +839,7 @@ export default function Calendar({
         <EventForm
           day={day}
           familyId={familyId}
+          members={members}
           saving={saving}
           error={error}
           onSubmit={handleCreate}
@@ -776,6 +857,7 @@ export default function Calendar({
                 day={day}
                 isEditing={editingId === ev.id}
                 familyId={familyId}
+                members={members}
                 saving={saving}
                 error={error}
                 onEdit={handleEdit}
