@@ -97,6 +97,16 @@ export async function createEvent(formData: FormData) {
       .insert(reminders.map((m) => ({ event_id: created.id, minutes_before: m })));
   }
 
+  // Attendee tags (informational only — zero rows means "everyone", see
+  // updateEvent for the same rule). Submitted as repeated "attendees" fields
+  // holding user_id strings.
+  const attendees = [...new Set(formData.getAll("attendees").map(String))];
+  if (created && attendees.length) {
+    await supabase
+      .from("event_attendees")
+      .insert(attendees.map((user_id) => ({ event_id: created.id, user_id })));
+  }
+
   revalidatePath("/app");
   return { success: true };
 }
@@ -155,6 +165,18 @@ export async function updateEvent(formData: FormData) {
     await supabase
       .from("event_reminders")
       .insert(reminders.map((m) => ({ event_id: id, minutes_before: m })));
+  }
+
+  // Replace the event's attendee tags with the submitted set. An empty
+  // submitted list naturally results in zero rows after this delete with
+  // nothing re-inserted — that's what makes selecting "Everyone" work
+  // correctly (zero rows = everyone, never insert one row per member).
+  const attendees = [...new Set(formData.getAll("attendees").map(String))];
+  await supabase.from("event_attendees").delete().eq("event_id", id);
+  if (attendees.length) {
+    await supabase
+      .from("event_attendees")
+      .insert(attendees.map((user_id) => ({ event_id: id, user_id })));
   }
 
   revalidatePath("/app");
@@ -261,7 +283,8 @@ export async function addGroceryItem(
   familyId: string,
   name: string,
   quantity: string,
-  unit: string = ""
+  unit: string = "",
+  price: number | null = null
 ) {
   const text = name.trim();
   if (!text) return { error: "Enter an item." };
@@ -277,6 +300,7 @@ export async function addGroceryItem(
     name: text,
     quantity: quantity.trim() || null,
     unit: unit.trim() || null,
+    price,
     added_by: user.id,
   });
   if (error) return { error: error.message };
