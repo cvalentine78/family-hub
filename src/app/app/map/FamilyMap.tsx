@@ -703,8 +703,11 @@ function LiveMarkers({
           >
             <div className="flex flex-col items-center cursor-pointer">
               <MemberPin member={m} name={name} />
-              <span className="mt-0.5 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
-                {loc.user_id === currentUserId ? "You" : name}
+              <span className="mt-0.5 flex items-center gap-1 text-[11px] font-medium bg-white/90 px-1.5 rounded shadow-sm whitespace-nowrap">
+                <span>{loc.user_id === currentUserId ? "You" : name}</span>
+                <span className="font-normal text-[10px] text-gray-500">
+                  {timeAgo(loc.updated_at)}
+                </span>
               </span>
             </div>
           </AdvancedMarker>
@@ -867,7 +870,7 @@ function HistoryTrail({
     if (!map || crumbs.length === 0) return;
     if (crumbs.length === 1) {
       map.setCenter({ lat: crumbs[0].lat, lng: crumbs[0].lng });
-      map.setZoom(17);
+      map.setZoom(18);
       return;
     }
     const lats = crumbs.map((c) => c.lat);
@@ -879,7 +882,7 @@ function HistoryTrail({
         east: Math.max(...lngs),
         west: Math.min(...lngs),
       },
-      80
+      40
     );
   }, [map, crumbs]);
 
