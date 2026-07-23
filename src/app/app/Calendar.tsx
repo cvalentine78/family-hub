@@ -142,12 +142,22 @@ function EventForm({
   onClose: () => void;
 }) {
   const isEdit = !!event;
+  const now = new Date();
+  // New event for today: default to the current hour (minutes zeroed), not
+  // a hardcoded 9am — Cari asked for this specifically for today; any other
+  // day still defaults to 9am, unchanged. Reuses the same local-calendar-day
+  // comparison (sameDay/ymd, local getFullYear/getMonth/getDate) already used
+  // elsewhere in this file, so this behaves correctly across the local day
+  // boundary the same way the rest of the form does.
   const start = event
     ? new Date(event.starts_at)
+    : sameDay(day, now)
+    ? new Date(day.getFullYear(), day.getMonth(), day.getDate(), now.getHours(), 0)
     : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0);
-  const end = event
-    ? new Date(event.ends_at)
-    : new Date(day.getFullYear(), day.getMonth(), day.getDate(), 10, 0);
+  // New event's end always follows start by one hour (was a separately
+  // hardcoded 10am, only correct because start was always 9am before).
+  // Editing still uses the real event's own end time, untouched.
+  const end = event ? new Date(event.ends_at) : new Date(start.getTime() + 60 * 60 * 1000);
   // Shared reminders for this event; default one at 30 min before for new events.
   const [reminders, setReminders] = useState<number[]>(
     event ? event.reminders : [30]
