@@ -136,6 +136,7 @@ export async function createEvent(formData: FormData) {
   if (!user) return { error: "Not signed in." };
 
   const isAdultCaller = await callerIsAdult(supabase, user.id);
+  const effectiveAlarmReminder = isAdultCaller ? alarm_reminder : false;
 
   const { data: created, error } = await supabase
     .from("events")
@@ -145,7 +146,7 @@ export async function createEvent(formData: FormData) {
       description: description || null,
       location: location || null,
       all_day,
-      alarm_reminder: isAdultCaller ? alarm_reminder : false,
+      alarm_reminder: effectiveAlarmReminder,
       starts_at: new Date(starts_at).toISOString(),
       ends_at: new Date(ends_at || starts_at).toISOString(),
       recurrence: validRecurrence.includes(recurrence) ? recurrence : "none",
@@ -168,6 +169,12 @@ export async function createEvent(formData: FormData) {
         .filter((n) => Number.isInteger(n) && n >= 0 && n <= 40320) // <= 4 weeks
     ),
   ];
+  // Alarm-flagged events always get a start-time (0-minute) ring guaranteed,
+  // not left to Cari to remember to add one — she asked for this to be
+  // automatic, not a per-event chore.
+  if (effectiveAlarmReminder && !reminders.includes(0)) {
+    reminders.push(0);
+  }
   if (created && reminders.length) {
     await supabase
       .from("event_reminders")
@@ -214,7 +221,7 @@ export async function updateEvent(formData: FormData) {
 
   const isAdultCaller = await callerIsAdult(supabase, user.id);
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("events")
     .update({
       title,
@@ -228,7 +235,9 @@ export async function updateEvent(formData: FormData) {
       recurrence_until:
         recurrence !== "none" && recurrence_until ? recurrence_until : null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .select("alarm_reminder")
+    .single();
 
   if (error) return { error: error.message };
 
@@ -241,6 +250,13 @@ export async function updateEvent(formData: FormData) {
         .filter((n) => Number.isInteger(n) && n >= 0 && n <= 40320) // <= 4 weeks
     ),
   ];
+  // Read back the actual post-update value rather than trusting the
+  // submitted form's alarm_reminder — a non-adult caller's update omits that
+  // key entirely, leaving whatever was already in the database, which this
+  // function has no other way to know without the .select() above.
+  if (updated?.alarm_reminder && !reminders.includes(0)) {
+    reminders.push(0);
+  }
   await supabase.from("event_reminders").delete().eq("event_id", id);
   if (reminders.length) {
     await supabase
