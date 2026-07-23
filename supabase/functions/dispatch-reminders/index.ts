@@ -125,6 +125,20 @@ Deno.serve(async (req) => {
     return ids;
   }
 
+  // Alarm-flagged reminders only: tagged attendees get the ring, not the
+  // whole family, since alarm-style reminders (unlike the plain path below)
+  // are meant for the person the event is actually for. Empty tagging keeps
+  // today's whole-family behavior — attendee tagging elsewhere in this app
+  // is purely informational, so an untagged event must fall back exactly as
+  // before, not narrow to nobody.
+  async function eventAttendees(eventId: string): Promise<string[]> {
+    const { data } = await admin
+      .from("event_attendees")
+      .select("user_id")
+      .eq("event_id", eventId);
+    return (data ?? []).map((a: { user_id: string }) => a.user_id);
+  }
+
   let sent = 0;
   for (const d of due) {
     const occIso = new Date(d.occ).toISOString();
@@ -141,11 +155,13 @@ Deno.serve(async (req) => {
     if (!userIds.length) continue;
 
     if (d.ev.alarm_reminder) {
+      const attendees = await eventAttendees(d.ev.id);
+      const targetIds = attendees.length ? attendees : userIds;
       await fetch(NOTIFY_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-notify-secret": secret },
         body: JSON.stringify({
-          userIds,
+          userIds: targetIds,
           title: "⏰ Reminder",
           body: `${d.ev.title} ${leadText(d.mb)}`,
           dataOnly: true,
