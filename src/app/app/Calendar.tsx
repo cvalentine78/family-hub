@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Capacitor } from "@capacitor/core";
 import { createEvent, updateEvent, deleteEvent } from "./actions";
@@ -489,6 +489,14 @@ export default function Calendar({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  // Synchronous guard alongside the `saving` state above: state updates
+  // aren't synchronous, so a fast double-tap can invoke handleCreate/
+  // handleUpdate twice before React re-renders the Save button as disabled
+  // — confirmed to actually happen (a duplicate "Test" event was created
+  // 1.04 seconds apart). A ref updates immediately, so the second
+  // near-simultaneous call sees it already set and bails out before ever
+  // calling the server action.
+  const submittingRef = useRef(false);
 
   // Native-only: keep locally-scheduled alarm-style reminders in sync with
   // this family's events every time this component sees a fresh events prop
@@ -593,32 +601,44 @@ export default function Calendar({
   }
 
   async function handleCreate(formData: FormData) {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     formData.set("starts_at", localInputToISO(String(formData.get("starts_at") || "")));
     formData.set("ends_at", localInputToISO(String(formData.get("ends_at") || "")));
     setSaving(true);
     setError(null);
-    const result = await createEvent(formData);
-    setSaving(false);
-    if (result?.error) {
-      setError(result.error);
-    } else {
-      setFormDay(null);
-      router.refresh();
+    try {
+      const result = await createEvent(formData);
+      if (result?.error) {
+        setError(result.error);
+      } else {
+        setFormDay(null);
+        router.refresh();
+      }
+    } finally {
+      setSaving(false);
+      submittingRef.current = false;
     }
   }
 
   async function handleUpdate(formData: FormData) {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     formData.set("starts_at", localInputToISO(String(formData.get("starts_at") || "")));
     formData.set("ends_at", localInputToISO(String(formData.get("ends_at") || "")));
     setSaving(true);
     setError(null);
-    const result = await updateEvent(formData);
-    setSaving(false);
-    if (result?.error) {
-      setError(result.error);
-    } else {
-      setEditingId(null);
-      router.refresh();
+    try {
+      const result = await updateEvent(formData);
+      if (result?.error) {
+        setError(result.error);
+      } else {
+        setEditingId(null);
+        router.refresh();
+      }
+    } finally {
+      setSaving(false);
+      submittingRef.current = false;
     }
   }
 
