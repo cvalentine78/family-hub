@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Capacitor } from "@capacitor/core";
 import { createEvent, updateEvent, deleteEvent } from "./actions";
@@ -497,6 +497,16 @@ export default function Calendar({
   // near-simultaneous call sees it already set and bails out before ever
   // calling the server action.
   const submittingRef = useRef(false);
+  // router.refresh() returns void — there's nothing to await — but it
+  // triggers a background re-fetch + re-render that isn't instant. Wrapping
+  // it in startTransition gives isPending, the real event-driven signal for
+  // "has that refresh-triggered update actually landed," so the Save button
+  // (see isSaving below) stays disabled through the full visible-update
+  // window, not just the network round-trip. Confirmed necessary: Cari hit
+  // this exact gap, tapping Save again because the calendar still looked
+  // unchanged even though the request had already completed.
+  const [isPending, startTransition] = useTransition();
+  const isSaving = saving || isPending;
 
   // Native-only: keep locally-scheduled alarm-style reminders in sync with
   // this family's events every time this component sees a fresh events prop
@@ -613,7 +623,9 @@ export default function Calendar({
         setError(result.error);
       } else {
         setFormDay(null);
-        router.refresh();
+        startTransition(() => {
+          router.refresh();
+        });
       }
     } finally {
       setSaving(false);
@@ -634,7 +646,9 @@ export default function Calendar({
         setError(result.error);
       } else {
         setEditingId(null);
-        router.refresh();
+        startTransition(() => {
+          router.refresh();
+        });
       }
     } finally {
       setSaving(false);
@@ -793,7 +807,7 @@ export default function Calendar({
                 familyId={familyId}
                 members={members}
                 isAdultViewer={isAdultViewer}
-                saving={saving}
+                saving={isSaving}
                 error={error}
                 onSubmit={handleCreate}
                 onClose={() => setFormDay(null)}
@@ -812,7 +826,7 @@ export default function Calendar({
                     familyId={familyId}
                     members={members}
                     isAdultViewer={isAdultViewer}
-                    saving={saving}
+                    saving={isSaving}
                     error={error}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
@@ -878,7 +892,7 @@ export default function Calendar({
                       familyId={familyId}
                       members={members}
                       isAdultViewer={isAdultViewer}
-                      saving={saving}
+                      saving={isSaving}
                       error={error}
                       onEdit={handleEdit}
                       onDelete={handleDelete}
@@ -894,7 +908,7 @@ export default function Calendar({
           familyId={familyId}
           members={members}
           isAdultViewer={isAdultViewer}
-          saving={saving}
+          saving={isSaving}
           error={error}
           onSubmit={handleCreate}
           onClose={() => setFormDay(null)}
@@ -930,7 +944,7 @@ export default function Calendar({
           familyId={familyId}
           members={members}
           isAdultViewer={isAdultViewer}
-          saving={saving}
+          saving={isSaving}
           error={error}
           onSubmit={handleCreate}
           onClose={() => setFormDay(null)}
@@ -949,7 +963,7 @@ export default function Calendar({
                 familyId={familyId}
                 members={members}
                 isAdultViewer={isAdultViewer}
-                saving={saving}
+                saving={isSaving}
                 error={error}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
