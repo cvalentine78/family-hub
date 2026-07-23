@@ -23,6 +23,7 @@ type EventRow = {
   starts_at: string;
   recurrence: string | null;
   recurrence_until: string | null;
+  alarm_reminder: boolean;
 };
 
 async function notifySecret(): Promise<string | null> {
@@ -91,7 +92,7 @@ Deno.serve(async (req) => {
   const { data: reminders } = await admin
     .from("event_reminders")
     .select(
-      "minutes_before, events(id, family_id, title, starts_at, recurrence, recurrence_until)",
+      "minutes_before, events(id, family_id, title, starts_at, recurrence, recurrence_until, alarm_reminder)",
     );
   if (!reminders?.length) {
     return new Response(JSON.stringify({ due: 0, sent: 0 }), {
@@ -139,16 +140,35 @@ Deno.serve(async (req) => {
     const userIds = await familyMembers(d.ev.family_id);
     if (!userIds.length) continue;
 
-    await fetch(NOTIFY_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-notify-secret": secret },
-      body: JSON.stringify({
-        userIds,
-        title: "⏰ Reminder",
-        body: `${d.ev.title} ${leadText(d.mb)}`,
-        data: { type: "event", eventId: d.ev.id },
-      }),
-    });
+    if (d.ev.alarm_reminder) {
+      await fetch(NOTIFY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-notify-secret": secret },
+        body: JSON.stringify({
+          userIds,
+          title: "⏰ Reminder",
+          body: `${d.ev.title} ${leadText(d.mb)}`,
+          dataOnly: true,
+          data: {
+            type: "event_alarm",
+            eventId: d.ev.id,
+            title: d.ev.title,
+            leadText: leadText(d.mb),
+          },
+        }),
+      });
+    } else {
+      await fetch(NOTIFY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-notify-secret": secret },
+        body: JSON.stringify({
+          userIds,
+          title: "⏰ Reminder",
+          body: `${d.ev.title} ${leadText(d.mb)}`,
+          data: { type: "event", eventId: d.ev.id },
+        }),
+      });
+    }
     sent++;
   }
 

@@ -77,6 +77,21 @@ export default function Onboarding() {
           </label>
         )}
 
+        <label className="block">
+          <span className="text-sm font-medium text-gray-700">
+            Date of birth
+          </span>
+          <input
+            type="date"
+            name="date_of_birth"
+            required
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none"
+          />
+          <span className="mt-1 block text-xs text-gray-500">
+            This can&apos;t be changed later, so please double-check it.
+          </span>
+        </label>
+
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         <button

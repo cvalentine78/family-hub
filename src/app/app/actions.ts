@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { generateJoinCode } from "@/lib/family";
+import { isAdult, isPlausibleDateOfBirth } from "@/lib/age";
 import {
   krogerConfigured,
   searchKrogerCatalog,
@@ -9,9 +10,73 @@ import {
 } from "@/lib/kroger";
 import { revalidatePath } from "next/cache";
 
+// Whether the caller (by their own date_of_birth) is an adult. Never trust a
+// submitted value for this — always looked up server-side from auth.uid().
+async function callerIsAdult(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("date_of_birth")
+    .eq("id", userId)
+    .maybeSingle();
+  return isAdult(data?.date_of_birth ?? null);
+}
+
+// First-time date_of_birth capture: saves it (the write-once trigger accepts
+// this first write) and creates the yearly all-day birthday event it implies.
+// Year is just an anchor (does not need to match the real birth year).
+// date_of_birth can never be set again after this, so a silently swallowed
+// failure here would leave someone permanently stuck with no birthdate and
+// no birthday event — every write is checked, same as the rest of this file.
+async function saveDateOfBirthAndBirthdayEvent(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  familyId: string,
+  dateOfBirth: string
+): Promise<{ error: string } | { success: true }> {
+  const { error: dobError } = await supabase
+    .from("profiles")
+    .update({ date_of_birth: dateOfBirth })
+    .eq("id", userId);
+  if (dobError) return { error: dobError.message };
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("display_name")
+    .eq("id", userId)
+    .maybeSingle();
+  const displayName = profile?.display_name ?? "Member";
+
+  const [, month, day] = dateOfBirth.split("-").map(Number);
+  const anchorYear = new Date().getFullYear();
+  const startsAt = new Date(anchorYear, month - 1, day, 9, 0);
+  const endsAt = new Date(anchorYear, month - 1, day, 10, 0);
+
+  const { error: eventError } = await supabase.from("events").insert({
+    family_id: familyId,
+    title: `${displayName}'s Birthday 🎂`,
+    all_day: true,
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
+    recurrence: "yearly",
+    recurrence_until: null,
+    created_by: userId,
+  });
+  if (eventError) return { error: eventError.message };
+
+  return { success: true };
+}
+
 export async function createFamily(formData: FormData) {
   const name = String(formData.get("name") || "").trim();
   if (!name) return { error: "Please enter a family name." };
+
+  const date_of_birth = String(formData.get("date_of_birth") || "").trim();
+  if (!date_of_birth) return { error: "Please enter your date of birth." };
+  if (!isPlausibleDateOfBirth(date_of_birth))
+    return { error: "Please enter a valid date of birth." };
 
   const supabase = await createClient();
   const {
@@ -22,7 +87,7 @@ export async function createFamily(formData: FormData) {
   // Try a few times in case of a join_code collision.
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = generateJoinCode();
-    const { error } = await supabase.rpc("create_family", {
+    const { data: familyId, error } = await supabase.rpc("create_family", {
       family_name: name,
       code,
     });
@@ -31,6 +96,14 @@ export async function createFamily(formData: FormData) {
       if (error.code === "23505") continue; // unique join_code, retry
       return { error: error.message };
     }
+
+    const dobResult = await saveDateOfBirthAndBirthdayEvent(
+      supabase,
+      user.id,
+      familyId as string,
+      date_of_birth
+    );
+    if ("error" in dobResult) return { error: dobResult.error };
 
     revalidatePath("/app");
     return { success: true };
@@ -45,6 +118,7 @@ export async function createEvent(formData: FormData) {
   const description = String(formData.get("description") || "").trim();
   const location = String(formData.get("location") || "").trim();
   const all_day = formData.get("all_day") === "on";
+  const alarm_reminder = formData.get("alarm_reminder") === "on";
   const starts_at = String(formData.get("starts_at") || "");
   const ends_at = String(formData.get("ends_at") || "");
   const recurrence = String(formData.get("recurrence") || "none");
@@ -61,6 +135,8 @@ export async function createEvent(formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not signed in." };
 
+  const isAdultCaller = await callerIsAdult(supabase, user.id);
+
   const { data: created, error } = await supabase
     .from("events")
     .insert({
@@ -69,6 +145,7 @@ export async function createEvent(formData: FormData) {
       description: description || null,
       location: location || null,
       all_day,
+      alarm_reminder: isAdultCaller ? alarm_reminder : false,
       starts_at: new Date(starts_at).toISOString(),
       ends_at: new Date(ends_at || starts_at).toISOString(),
       recurrence: validRecurrence.includes(recurrence) ? recurrence : "none",
@@ -117,6 +194,7 @@ export async function updateEvent(formData: FormData) {
   const description = String(formData.get("description") || "").trim();
   const location = String(formData.get("location") || "").trim();
   const all_day = formData.get("all_day") === "on";
+  const alarm_reminder = formData.get("alarm_reminder") === "on";
   const starts_at = String(formData.get("starts_at") || "");
   const ends_at = String(formData.get("ends_at") || "");
   const recurrence = String(formData.get("recurrence") || "none");
@@ -134,6 +212,8 @@ export async function updateEvent(formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not signed in." };
 
+  const isAdultCaller = await callerIsAdult(supabase, user.id);
+
   const { error } = await supabase
     .from("events")
     .update({
@@ -141,6 +221,7 @@ export async function updateEvent(formData: FormData) {
       description: description || null,
       location: location || null,
       all_day,
+      ...(isAdultCaller ? { alarm_reminder } : {}),
       starts_at: new Date(starts_at).toISOString(),
       ends_at: new Date(ends_at || starts_at).toISOString(),
       recurrence: validRecurrence.includes(recurrence) ? recurrence : "none",
@@ -906,13 +987,20 @@ export async function joinFamily(formData: FormData) {
     .toUpperCase();
   if (!code) return { error: "Please enter a join code." };
 
+  const date_of_birth = String(formData.get("date_of_birth") || "").trim();
+  if (!date_of_birth) return { error: "Please enter your date of birth." };
+  if (!isPlausibleDateOfBirth(date_of_birth))
+    return { error: "Please enter a valid date of birth." };
+
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not signed in." };
 
-  const { error } = await supabase.rpc("join_family_by_code", { code });
+  const { data: familyId, error } = await supabase.rpc("join_family_by_code", {
+    code,
+  });
 
   if (error) {
     if (error.message.includes("NO_FAMILY")) {
@@ -920,6 +1008,14 @@ export async function joinFamily(formData: FormData) {
     }
     return { error: error.message };
   }
+
+  const dobResult = await saveDateOfBirthAndBirthdayEvent(
+    supabase,
+    user.id,
+    familyId as string,
+    date_of_birth
+  );
+  if ("error" in dobResult) return { error: dobResult.error };
 
   revalidatePath("/app");
   return { success: true };

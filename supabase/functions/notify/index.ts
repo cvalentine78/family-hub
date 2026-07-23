@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
     return new Response("unauthorized", { status: 401 });
   }
 
-  const { userIds, title, body, data } = await req.json().catch(() => ({}));
+  const { userIds, title, body, data, dataOnly } = await req.json().catch(() => ({}));
   if (!Array.isArray(userIds) || userIds.length === 0 || !title) {
     return new Response(JSON.stringify({ sent: 0, reason: "no recipients" }), {
       headers: { "Content-Type": "application/json" },
@@ -140,9 +140,11 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           message: {
             token,
-            notification: { title, body: body ?? "" },
+            ...(dataOnly ? {} : { notification: { title, body: body ?? "" } }),
             data: data ?? {},
-            android: { priority: "high", notification: { sound: "default" } },
+            android: dataOnly
+              ? { priority: "high" }
+              : { priority: "high", notification: { sound: "default" } },
           },
         }),
       },

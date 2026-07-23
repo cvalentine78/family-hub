@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Capacitor } from "@capacitor/core";
 import { createEvent, updateEvent, deleteEvent } from "./actions";
 import Avatar from "./members/Avatar";
 import type { Member } from "@/lib/family";
+import { AlarmScheduler, computeAlarmPairs } from "@/lib/alarmScheduler";
 
 export type EventRow = {
   id: string;
@@ -14,6 +16,7 @@ export type EventRow = {
   starts_at: string;
   ends_at: string;
   all_day: boolean;
+  alarm_reminder: boolean;
   recurrence: string; // none | daily | weekly | monthly | yearly
   recurrence_until: string | null; // YYYY-MM-DD
   reminders: number[]; // minutes-before values
@@ -122,6 +125,7 @@ function EventForm({
   event,
   familyId,
   members,
+  isAdultViewer,
   saving,
   error,
   onSubmit,
@@ -131,6 +135,7 @@ function EventForm({
   event?: EventRow;
   familyId: string;
   members: Member[];
+  isAdultViewer: boolean;
   saving: boolean;
   error: string | null;
   onSubmit: (formData: FormData) => void;
@@ -250,6 +255,15 @@ function EventForm({
           Editing this changes the whole repeating series.
         </p>
       )}
+      <label className="flex items-center gap-2 text-sm text-gray-600">
+        <input
+          type="checkbox"
+          name="alarm_reminder"
+          defaultChecked={event?.alarm_reminder}
+          disabled={!isAdultViewer}
+        />
+        Ring like an alarm
+      </label>
       <div className="space-y-1.5">
         <span className="text-xs text-gray-500">🔔 Reminders</span>
         {reminders.length === 0 && (
@@ -359,6 +373,7 @@ function EventItem({
   isEditing,
   familyId,
   members,
+  isAdultViewer,
   saving,
   error,
   onEdit,
@@ -371,6 +386,7 @@ function EventItem({
   isEditing: boolean;
   familyId: string;
   members: Member[];
+  isAdultViewer: boolean;
   saving: boolean;
   error: string | null;
   onEdit: (id: string) => void;
@@ -386,6 +402,7 @@ function EventItem({
           event={ev}
           familyId={familyId}
           members={members}
+          isAdultViewer={isAdultViewer}
           saving={saving}
           error={error}
           onSubmit={onUpdate}
@@ -455,10 +472,12 @@ export default function Calendar({
   familyId,
   events,
   members,
+  isAdultViewer,
 }: {
   familyId: string;
   events: EventRow[];
   members: Member[];
+  isAdultViewer: boolean;
 }) {
   const router = useRouter();
   const today = new Date();
@@ -470,6 +489,22 @@ export default function Calendar({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+
+  // Native-only: keep locally-scheduled alarm-style reminders in sync with
+  // this family's events every time this component sees a fresh events prop
+  // (mount, or a server refetch after create/edit/delete). This is the only
+  // sync point for alarm scheduling — there's no periodic background
+  // resync — which is why computeAlarmPairs' lookahead window is generous
+  // (see alarmScheduler.ts). reconcile() is authoritative: native cancels
+  // anything not in this call's pairs, so a deleted/un-flagged event's
+  // alarms disappear on the next sync same as a newly-flagged one appears.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const pairs = computeAlarmPairs(events);
+    void AlarmScheduler.reconcile({ pairs }).catch((e) =>
+      console.error("alarm reconcile failed:", e)
+    );
+  }, [events]);
 
   // Search over the flat events list, NOT eventsByDay — that map expands a
   // recurring event into up to 800 grid occurrences, which would otherwise
@@ -737,6 +772,7 @@ export default function Calendar({
                 day={selectedDay}
                 familyId={familyId}
                 members={members}
+                isAdultViewer={isAdultViewer}
                 saving={saving}
                 error={error}
                 onSubmit={handleCreate}
@@ -755,6 +791,7 @@ export default function Calendar({
                     isEditing={editingId === ev.id}
                     familyId={familyId}
                     members={members}
+                    isAdultViewer={isAdultViewer}
                     saving={saving}
                     error={error}
                     onEdit={handleEdit}
@@ -820,6 +857,7 @@ export default function Calendar({
                       isEditing={editingId === ev.id}
                       familyId={familyId}
                       members={members}
+                      isAdultViewer={isAdultViewer}
                       saving={saving}
                       error={error}
                       onEdit={handleEdit}
@@ -835,6 +873,7 @@ export default function Calendar({
           day={day}
           familyId={familyId}
           members={members}
+          isAdultViewer={isAdultViewer}
           saving={saving}
           error={error}
           onSubmit={handleCreate}
@@ -870,6 +909,7 @@ export default function Calendar({
           day={day}
           familyId={familyId}
           members={members}
+          isAdultViewer={isAdultViewer}
           saving={saving}
           error={error}
           onSubmit={handleCreate}
@@ -888,6 +928,7 @@ export default function Calendar({
                 isEditing={editingId === ev.id}
                 familyId={familyId}
                 members={members}
+                isAdultViewer={isAdultViewer}
                 saving={saving}
                 error={error}
                 onEdit={handleEdit}
