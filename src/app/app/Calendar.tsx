@@ -162,6 +162,11 @@ function EventForm({
   const [reminders, setReminders] = useState<number[]>(
     event ? event.reminders : [30]
   );
+  // Controlled so changing Starts can recompute it (start + 1hr, flat, not
+  // duration-preserving — matches what "an hour later" was actually asked
+  // for). A manual edit to Ends itself still just sticks, since only the
+  // Starts input's onChange below ever calls setEndValue.
+  const [endValue, setEndValue] = useState(toLocalInput(end));
   function addReminder() {
     const used = new Set(reminders);
     const next = REMINDER_OPTIONS.find((o) => !used.has(o.value));
@@ -205,6 +210,12 @@ function EventForm({
             name="starts_at"
             required
             defaultValue={toLocalInput(start)}
+            onChange={(e) => {
+              const newStart = new Date(e.target.value);
+              if (!isNaN(newStart.getTime())) {
+                setEndValue(toLocalInput(new Date(newStart.getTime() + 60 * 60 * 1000)));
+              }
+            }}
             className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-sky-500"
           />
         </label>
@@ -213,7 +224,8 @@ function EventForm({
           <input
             type="datetime-local"
             name="ends_at"
-            defaultValue={toLocalInput(end)}
+            value={endValue}
+            onChange={(e) => setEndValue(e.target.value)}
             className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-sky-500"
           />
         </label>
