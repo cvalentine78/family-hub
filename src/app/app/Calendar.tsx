@@ -483,11 +483,13 @@ export default function Calendar({
   events,
   members,
   isAdultViewer,
+  currentUserId,
 }: {
   familyId: string;
   events: EventRow[];
   members: Member[];
   isAdultViewer: boolean;
+  currentUserId: string;
 }) {
   const router = useRouter();
   const today = new Date();
@@ -528,11 +530,11 @@ export default function Calendar({
   // alarms disappear on the next sync same as a newly-flagged one appears.
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    const pairs = computeAlarmPairs(events);
+    const pairs = computeAlarmPairs(events, currentUserId);
     void AlarmScheduler.reconcile({ pairs }).catch((e) =>
       console.error("alarm reconcile failed:", e)
     );
-  }, [events]);
+  }, [events, currentUserId]);
 
   // Search over the flat events list, NOT eventsByDay — that map expands a
   // recurring event into up to 800 grid occurrences, which would otherwise

@@ -116,6 +116,7 @@ function stableId(eventId: string, minutesBefore: number, occurrenceStartMs: num
 
 export function computeAlarmPairs(
   events: EventRow[],
+  currentUserId: string,
   now: number = Date.now(),
   lookaheadMs: number = LOOKAHEAD_MS
 ): AlarmPair[] {
@@ -124,6 +125,15 @@ export function computeAlarmPairs(
 
   for (const ev of events) {
     if (!ev.alarm_reminder) continue;
+    // Mirrors dispatch-reminders' server-side targeting exactly: tagged
+    // attendees only when any exist, whole family (i.e. don't skip) when
+    // none are tagged. Without this, every device that has the app open
+    // schedules and rings for every alarm-flagged event regardless of who's
+    // tagged, since RLS surfaces every family member every event — this
+    // check is what makes an untagged device correctly not schedule at all.
+    if (ev.attendees.length > 0 && !ev.attendees.includes(currentUserId)) {
+      continue;
+    }
     for (const mb of ev.reminders) {
       const mbMs = mb * 60_000;
       // Window shifted by the lead time, matching dispatch-reminders' own

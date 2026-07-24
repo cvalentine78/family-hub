@@ -69,6 +69,7 @@ export default async function CalendarPage() {
             events={events}
             members={members}
             isAdultViewer={isAdultViewer}
+            currentUserId={user.id}
           />
         </div>
         <aside className="order-2 lg:order-1 w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-6">
