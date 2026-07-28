@@ -12,6 +12,7 @@ function formatEventDate(iso: string) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "America/New_York",
   });
 }
 
@@ -94,6 +95,7 @@ export default async function DashboardPage() {
                       weekday: "short",
                       month: "short",
                       day: "numeric",
+                      timeZone: "America/New_York",
                     })
                   : formatEventDate(upcoming.starts_at)}
               </p>
