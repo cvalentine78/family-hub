@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "855734967966",
+    "project_id": "family-hub-ab0b2",
+    "storage_bucket": "family-hub-ab0b2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:855734967966:android:1d1990024a53af04ab658f",
+        "android_client_info": {
+          "package_name": "com.valentine.familyhub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBoC3VC8vtFTB8BUOkLLj4sOSYFz9kwZa0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

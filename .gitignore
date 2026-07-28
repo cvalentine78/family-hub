@@ -42,3 +42,16 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Android native project (Capacitor) - local/generated, not source
+android/.gradle/
+android/.idea/
+android/local.properties
+android/*.iml
+android/**/*.iml
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
