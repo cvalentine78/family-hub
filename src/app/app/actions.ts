@@ -8,6 +8,7 @@ import {
   searchKrogerCatalog,
   type KrogerProduct,
 } from "@/lib/kroger";
+import { fetchAndParseOutlookIcs } from "@/lib/outlookIcs";
 import { revalidatePath } from "next/cache";
 
 // Whether the caller (by their own date_of_birth) is an adult. Never trust a
@@ -274,6 +275,203 @@ export async function updateEvent(formData: FormData) {
     await supabase
       .from("event_attendees")
       .insert(attendees.map((user_id) => ({ event_id: id, user_id })));
+  }
+
+  revalidatePath("/app");
+  return { success: true };
+}
+
+// Paste/update the user's published Outlook ICS subscription link. No
+// format guarantee beyond "http(s) URL" — a bad link just fails softly at
+// sync time (syncOutlookCalendar below), same as any other external-fetch
+// failure in this app.
+export async function saveOutlookIcsUrl(formData: FormData) {
+  const ics_url = String(formData.get("ics_url") || "").trim();
+  if (!ics_url) return { error: "Please paste your Outlook calendar link." };
+  if (!/^https?:\/\//i.test(ics_url)) {
+    return { error: "That doesn't look like a web link." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { error } = await supabase.from("outlook_calendar_connections").upsert({
+    user_id: user.id,
+    ics_url,
+    updated_at: new Date().toISOString(),
+    // Reset the cooldown (see syncOutlookCalendar) so a new/changed link
+    // gets fetched on the very next calendar page load instead of being
+    // held back by a stale cooldown timer from the previous link.
+    last_synced_at: null,
+    last_sync_error: null,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/app/members");
+  return { success: true };
+}
+
+// Disconnects the feed and removes everything it ever synced — a frozen,
+// no-longer-updating imported event would be confusing to leave behind, and
+// this app has no other lifecycle for "imported but disconnected."
+export async function clearOutlookIcsUrl() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { error: deleteEventsError } = await supabase
+    .from("events")
+    .delete()
+    .eq("created_by", user.id)
+    .eq("source", "outlook_import");
+  if (deleteEventsError) return { error: deleteEventsError.message };
+
+  const { error } = await supabase
+    .from("outlook_calendar_connections")
+    .delete()
+    .eq("user_id", user.id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/app");
+  revalidatePath("/app/members");
+  return { success: true };
+}
+
+// fetchAndParseOutlookIcs has a 15s fetch timeout and this is called on
+// every Calendar page render — without a cooldown, a slow or down Outlook
+// feed adds up to 15s to that page's load on every single visit, not just
+// the connected user's first one. 5 minutes bounds that to at most once per
+// window per user while staying reasonably fresh for repeat views in one
+// session. Applies to a failed attempt too (see below), not just a
+// successful one — a persistently broken feed must not retry-and-time-out
+// on every load either, since that's the worst case for this exact problem.
+const SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+
+// Pulls the current user's Outlook feed (if connected and not within its
+// cooldown) and reconciles it into events via sync_outlook_events(), the
+// same whole-truth-per-call contract as the native alarm scheduler's
+// reconcile(). No-ops quietly if the user has no connection saved — this is
+// called unconditionally from the Calendar page on every load. A
+// fetch/parse failure is reported (surfaced via OutlookSyncBanner on the
+// calendar page) but never thrown, so a temporarily-down or
+// briefly-misconfigured feed can't break the calendar page itself.
+export async function syncOutlookCalendar(familyId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { data: connection } = await supabase
+    .from("outlook_calendar_connections")
+    .select("ics_url, last_synced_at, last_sync_error")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!connection) return { synced: false as const };
+
+  const lastSyncedMs = connection.last_synced_at
+    ? Date.parse(connection.last_synced_at)
+    : 0;
+  if (Date.now() - lastSyncedMs < SYNC_COOLDOWN_MS) {
+    // Skip the network round trip this load; surface whatever the last
+    // attempt found rather than re-fetching.
+    return connection.last_sync_error
+      ? { error: connection.last_sync_error }
+      : { synced: true as const, skipped: true as const };
+  }
+
+  const result = await fetchAndParseOutlookIcs(connection.ics_url, Date.now());
+  if ("error" in result) {
+    await supabase
+      .from("outlook_calendar_connections")
+      .update({
+        last_synced_at: new Date().toISOString(),
+        last_sync_error: result.error,
+      })
+      .eq("user_id", user.id);
+    return { error: result.error };
+  }
+
+  const { data, error } = await supabase.rpc("sync_outlook_events", {
+    p_family_id: familyId,
+    p_events: result.events,
+  });
+
+  await supabase
+    .from("outlook_calendar_connections")
+    .update({
+      last_synced_at: new Date().toISOString(),
+      last_sync_error: error ? error.message : null,
+    })
+    .eq("user_id", user.id);
+  if (error) return { error: error.message };
+
+  return { synced: true as const, ...(data as { upserted: number; deleted: number }) };
+}
+
+// The only app-editable fields on a source='outlook_import' event — every
+// other field is locked server-side by the events_outlook_lock trigger, and
+// this action deliberately never sends those other fields at all (not just
+// leaves them disabled), matching the "no edit form, not a disabled one"
+// requirement for imported events. Scoped with .eq("source","outlook_import")
+// so this can't be repurposed to edit a native event's flags through a
+// different code path than updateEvent.
+export async function updateImportedEventFlags(formData: FormData) {
+  const id = String(formData.get("id") || "");
+  if (!id) return { error: "Missing event." };
+  const shared_with_family = formData.get("shared_with_family") === "on";
+  const alarm_reminder = formData.get("alarm_reminder") === "on";
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const isAdultCaller = await callerIsAdult(supabase, user.id);
+
+  // Read back the actual post-update value rather than trusting the
+  // submitted form's alarm_reminder — a non-adult caller's update omits
+  // that key entirely, leaving whatever was already in the database (same
+  // reasoning as updateEvent above).
+  const { data: updated, error } = await supabase
+    .from("events")
+    .update({
+      shared_with_family,
+      ...(isAdultCaller ? { alarm_reminder } : {}),
+    })
+    .eq("id", id)
+    .eq("source", "outlook_import")
+    .select("alarm_reminder")
+    .single();
+  if (error) return { error: error.message };
+
+  // dispatch-reminders and computeAlarmPairs both decide what's due by
+  // iterating event_reminders, never by reading events.alarm_reminder
+  // directly — without this, checking the box does nothing, silently, with
+  // no error anywhere. Mirrors createEvent/updateEvent's own "alarm-flagged
+  // events always get a start-time ring" guarantee. Insert-if-missing so a
+  // second toggle doesn't duplicate it; remove on false for clean state,
+  // even though nothing reads a leftover row once alarm_reminder is false.
+  if (updated?.alarm_reminder) {
+    const { data: existing } = await supabase
+      .from("event_reminders")
+      .select("id")
+      .eq("event_id", id)
+      .eq("minutes_before", 0)
+      .maybeSingle();
+    if (!existing) {
+      await supabase
+        .from("event_reminders")
+        .insert({ event_id: id, minutes_before: 0 });
+    }
+  } else {
+    await supabase.from("event_reminders").delete().eq("event_id", id);
   }
 
   revalidatePath("/app");

@@ -125,13 +125,24 @@ export function computeAlarmPairs(
 
   for (const ev of events) {
     if (!ev.alarm_reminder) continue;
-    // Mirrors dispatch-reminders' server-side targeting exactly: tagged
-    // attendees only when any exist, whole family (i.e. don't skip) when
-    // none are tagged. Without this, every device that has the app open
-    // schedules and rings for every alarm-flagged event regardless of who's
-    // tagged, since RLS surfaces every family member every event — this
-    // check is what makes an untagged device correctly not schedule at all.
-    if (ev.attendees.length > 0 && !ev.attendees.includes(currentUserId)) {
+    // A private (not-yet-shared) Outlook import alarms its owner ONLY,
+    // regardless of attendee tagging or the whole-family fallback below —
+    // short-circuits before that logic entirely. Once shared_with_family
+    // flips true, this event falls through to the standard rule below,
+    // same as any native event. Must stay byte-for-byte equivalent to the
+    // identical check in dispatch-reminders/index.ts — a client/server
+    // mismatch here is the exact bug class already found and fixed once
+    // for attendee-scoped alarms.
+    if (ev.source === "outlook_import" && !ev.shared_with_family) {
+      if (ev.created_by !== currentUserId) continue;
+    } else if (ev.attendees.length > 0 && !ev.attendees.includes(currentUserId)) {
+      // Mirrors dispatch-reminders' server-side targeting exactly: tagged
+      // attendees only when any exist, whole family (i.e. don't skip) when
+      // none are tagged. Without this, every device that has the app open
+      // schedules and rings for every alarm-flagged event regardless of
+      // who's tagged, since RLS surfaces every family member every event —
+      // this check is what makes an untagged device correctly not
+      // schedule at all.
       continue;
     }
     for (const mb of ev.reminders) {

@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Capacitor } from "@capacitor/core";
-import { createEvent, updateEvent, deleteEvent } from "./actions";
+import {
+  createEvent,
+  updateEvent,
+  deleteEvent,
+  updateImportedEventFlags,
+} from "./actions";
 import Avatar from "./members/Avatar";
 import type { Member } from "@/lib/family";
 import { AlarmScheduler, computeAlarmPairs } from "@/lib/alarmScheduler";
@@ -21,6 +26,10 @@ export type EventRow = {
   recurrence_until: string | null; // YYYY-MM-DD
   reminders: number[]; // minutes-before values
   attendees: string[]; // user_ids; empty = everyone
+  created_by: string;
+  source: string | null; // null = native event, 'outlook_import' = synced
+  external_uid: string | null;
+  shared_with_family: boolean; // only meaningful when source = 'outlook_import'
 };
 
 type View = "day" | "week" | "month";
@@ -387,8 +396,90 @@ function EventForm({
   );
 }
 
-// A single event row, with inline edit swapping in the shared EventForm. Also
-// module-scope so it (and the EventForm it hosts) survive Calendar re-renders.
+// Detail/edit view for a source='outlook_import' event: title/time/location/
+// description render as plain locked text (no edit form at all for those
+// fields, not just a disabled one — the next sync would silently overwrite
+// an edit anyway, and a "why didn't my change stick" experience is worse
+// than no edit affordance). Only shared_with_family + alarm_reminder are
+// ever submitted, matching the server action's own scoping.
+function ImportedEventEditor({
+  ev,
+  isAdultViewer,
+  saving,
+  error,
+  onSubmit,
+  onClose,
+}: {
+  ev: EventRow;
+  isAdultViewer: boolean;
+  saving: boolean;
+  error: string | null;
+  onSubmit: (formData: FormData) => void;
+  onClose: () => void;
+}) {
+  return (
+    <form
+      action={onSubmit}
+      className="space-y-3 mt-3 bg-gray-50 rounded-xl p-3"
+    >
+      <input type="hidden" name="id" value={ev.id} />
+      <div>
+        <p className="font-medium text-gray-800">{ev.title}</p>
+        <p className="text-xs text-gray-500">
+          {ev.all_day
+            ? "All day"
+            : `${formatTime(ev.starts_at)} – ${formatTime(ev.ends_at)}`}
+          {ev.location ? ` · ${ev.location}` : ""}
+        </p>
+        {ev.description && (
+          <p className="text-xs text-gray-400 mt-1">{ev.description}</p>
+        )}
+        <p className="text-[11px] text-gray-400 mt-1.5 italic">
+          Synced from Outlook — title, time, and location can only be changed
+          there.
+        </p>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-gray-600">
+        <input
+          type="checkbox"
+          name="shared_with_family"
+          defaultChecked={ev.shared_with_family}
+        />
+        Share with family
+      </label>
+      <label className="flex items-center gap-2 text-sm text-gray-600">
+        <input
+          type="checkbox"
+          name="alarm_reminder"
+          defaultChecked={ev.alarm_reminder}
+          disabled={!isAdultViewer}
+        />
+        Ring like an alarm
+      </label>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex-1 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white font-semibold py-2 rounded-lg text-sm"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 text-sm text-gray-500 hover:text-gray-800"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// A single event row, with inline edit swapping in the shared EventForm (or,
+// for an Outlook-imported event, ImportedEventEditor above). Also
+// module-scope so it (and the forms it hosts) survive Calendar re-renders.
 function EventItem({
   ev,
   day,
@@ -396,11 +487,13 @@ function EventItem({
   familyId,
   members,
   isAdultViewer,
+  currentUserId,
   saving,
   error,
   onEdit,
   onDelete,
   onUpdate,
+  onUpdateImportedFlags,
   onCloseEdit,
 }: {
   ev: EventRow;
@@ -409,27 +502,43 @@ function EventItem({
   familyId: string;
   members: Member[];
   isAdultViewer: boolean;
+  currentUserId: string;
   saving: boolean;
   error: string | null;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (formData: FormData) => void;
+  onUpdateImportedFlags: (formData: FormData) => void;
   onCloseEdit: () => void;
 }) {
+  const isImported = ev.source === "outlook_import";
+  const isOwner = ev.created_by === currentUserId;
+
   if (isEditing) {
     return (
       <li>
-        <EventForm
-          day={day}
-          event={ev}
-          familyId={familyId}
-          members={members}
-          isAdultViewer={isAdultViewer}
-          saving={saving}
-          error={error}
-          onSubmit={onUpdate}
-          onClose={onCloseEdit}
-        />
+        {isImported ? (
+          <ImportedEventEditor
+            ev={ev}
+            isAdultViewer={isAdultViewer}
+            saving={saving}
+            error={error}
+            onSubmit={onUpdateImportedFlags}
+            onClose={onCloseEdit}
+          />
+        ) : (
+          <EventForm
+            day={day}
+            event={ev}
+            familyId={familyId}
+            members={members}
+            isAdultViewer={isAdultViewer}
+            saving={saving}
+            error={error}
+            onSubmit={onUpdate}
+            onClose={onCloseEdit}
+          />
+        )}
       </li>
     );
   }
@@ -444,6 +553,18 @@ function EventItem({
           {ev.recurrence && ev.recurrence !== "none" && (
             <span className="ml-1.5 text-xs text-gray-400" title={`Repeats ${ev.recurrence}`}>
               🔁
+            </span>
+          )}
+          {isImported && (
+            <span
+              className="ml-1.5 inline-flex items-center gap-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-medium px-1.5 py-0.5 rounded-full align-middle"
+              title={
+                ev.shared_with_family
+                  ? "Synced from Outlook, shared with family"
+                  : "Synced from Outlook, private"
+              }
+            >
+              📅 Outlook{!ev.shared_with_family && " 🔒"}
             </span>
           )}
         </p>
@@ -471,20 +592,29 @@ function EventItem({
         )}
       </div>
       <div className="flex items-center gap-1 shrink-0">
-        <button
-          onClick={() => onEdit(ev.id)}
-          className="text-xs text-gray-400 hover:text-sky-600"
-          aria-label="Edit event"
-        >
-          ✎
-        </button>
-        <button
-          onClick={() => onDelete(ev.id)}
-          className="text-xs text-gray-400 hover:text-red-600"
-          aria-label="Delete event"
-        >
-          ✕
-        </button>
+        {/* Imported events: only the owner can edit (share + alarm toggles
+            only, via ImportedEventEditor), and manual delete is deliberately
+            not offered at all — the next sync would just resurrect a still-
+            live Outlook event, so a delete button that doesn't stick would
+            be more confusing than none. */}
+        {(!isImported || isOwner) && (
+          <button
+            onClick={() => onEdit(ev.id)}
+            className="text-xs text-gray-400 hover:text-sky-600"
+            aria-label="Edit event"
+          >
+            ✎
+          </button>
+        )}
+        {!isImported && (
+          <button
+            onClick={() => onDelete(ev.id)}
+            className="text-xs text-gray-400 hover:text-red-600"
+            aria-label="Delete event"
+          >
+            ✕
+          </button>
+        )}
       </div>
     </li>
   );
@@ -680,6 +810,27 @@ export default function Calendar({
     }
   }
 
+  async function handleUpdateImportedFlags(formData: FormData) {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await updateImportedEventFlags(formData);
+      if (result?.error) {
+        setError(result.error);
+      } else {
+        setEditingId(null);
+        startTransition(() => {
+          router.refresh();
+        });
+      }
+    } finally {
+      setSaving(false);
+      submittingRef.current = false;
+    }
+  }
+
   async function handleDelete(id: string) {
     const fd = new FormData();
     fd.set("id", id);
@@ -850,11 +1001,13 @@ export default function Calendar({
                     familyId={familyId}
                     members={members}
                     isAdultViewer={isAdultViewer}
+                    currentUserId={currentUserId}
                     saving={isSaving}
                     error={error}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
                     onUpdate={handleUpdate}
+                    onUpdateImportedFlags={handleUpdateImportedFlags}
                     onCloseEdit={() => setEditingId(null)}
                   />
                 ))}
@@ -916,11 +1069,13 @@ export default function Calendar({
                       familyId={familyId}
                       members={members}
                       isAdultViewer={isAdultViewer}
+                      currentUserId={currentUserId}
                       saving={isSaving}
                       error={error}
                       onEdit={handleEdit}
                       onDelete={handleDelete}
                       onUpdate={handleUpdate}
+                      onUpdateImportedFlags={handleUpdateImportedFlags}
                       onCloseEdit={() => setEditingId(null)}
                     />
                   ))}
@@ -987,11 +1142,13 @@ export default function Calendar({
                 familyId={familyId}
                 members={members}
                 isAdultViewer={isAdultViewer}
+                currentUserId={currentUserId}
                 saving={isSaving}
                 error={error}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
                 onUpdate={handleUpdate}
+                onUpdateImportedFlags={handleUpdateImportedFlags}
                 onCloseEdit={() => setEditingId(null)}
               />
             ))}

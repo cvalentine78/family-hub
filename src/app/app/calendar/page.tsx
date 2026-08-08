@@ -9,6 +9,8 @@ import { isAdult } from "@/lib/age";
 import Nav from "../Nav";
 import OnlineMembers from "../OnlineMembers";
 import Calendar, { type EventRow } from "../Calendar";
+import { syncOutlookCalendar } from "../actions";
+import OutlookSyncBanner from "./OutlookSyncBanner";
 
 export default async function CalendarPage() {
   const supabase = await createClient();
@@ -27,10 +29,19 @@ export default async function CalendarPage() {
     .maybeSingle();
   const isAdultViewer = isAdult(dobRow?.date_of_birth ?? null);
 
+  // Pull the current user's Outlook feed (if connected, and not within its
+  // cooldown) before reading events, so anything new/changed since the last
+  // visit shows up on this same load. Fails soft — a down or misconfigured
+  // feed never blocks the calendar page itself, see syncOutlookCalendar's
+  // own comment; its error (if any) is surfaced below via OutlookSyncBanner
+  // rather than silently discarded.
+  const syncResult = await syncOutlookCalendar(family.id);
+  const syncError = "error" in syncResult ? syncResult.error : null;
+
   const { data } = await supabase
     .from("events")
     .select(
-      "id, title, description, location, starts_at, ends_at, all_day, alarm_reminder, recurrence, recurrence_until, event_reminders(minutes_before), event_attendees(user_id)"
+      "id, title, description, location, starts_at, ends_at, all_day, alarm_reminder, recurrence, recurrence_until, created_by, source, external_uid, shared_with_family, event_reminders(minutes_before), event_attendees(user_id)"
     )
     .eq("family_id", family.id)
     .order("starts_at", { ascending: true });
@@ -60,6 +71,8 @@ export default async function CalendarPage() {
         </div>
         <Nav />
       </div>
+
+      <OutlookSyncBanner message={syncError} />
 
       <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 items-start">
         {/* Calendar first on mobile; sidebar to the left on desktop. */}

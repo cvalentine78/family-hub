@@ -7,6 +7,7 @@ import { updateProfile } from "../../actions";
 import dynamic from "next/dynamic";
 import Avatar from "../Avatar";
 import ShareLocationToggle from "../../ShareLocationToggle";
+import OutlookConnectionEditor from "./OutlookConnectionEditor";
 import type { Member } from "@/lib/family";
 
 // The crop UI (canvas + image processing) is only needed once a photo is
@@ -16,9 +17,11 @@ const CropModal = dynamic(() => import("./CropModal"), { ssr: false });
 export default function ProfileEditor({
   member,
   shareLocation,
+  outlookIcsUrl,
 }: {
   member: Member;
   shareLocation: boolean;
+  outlookIcsUrl: string | null;
 }) {
   const router = useRouter();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(member.avatar_url);
@@ -170,6 +173,11 @@ export default function ProfileEditor({
         {saving ? "Saving…" : "Save profile"}
       </button>
     </form>
+    {/* Its own form, so it lives outside the profile form above — nesting
+        a <form> inside another <form> is invalid HTML. */}
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mt-4">
+      <OutlookConnectionEditor initialUrl={outlookIcsUrl} />
+    </div>
     </>
   );
 }

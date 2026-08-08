@@ -30,6 +30,15 @@ export default async function MemberProfilePage({
 
   const isSelf = member.user_id === user.id;
   const shareLocation = isSelf ? await getMyShareLocation() : false;
+  let outlookIcsUrl: string | null = null;
+  if (isSelf) {
+    const { data: connection } = await supabase
+      .from("outlook_calendar_connections")
+      .select("ics_url")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    outlookIcsUrl = connection?.ics_url ?? null;
+  }
 
   return (
     <div className="max-w-xl mx-auto px-4 py-6">
@@ -46,7 +55,11 @@ export default async function MemberProfilePage({
               <h1 className="text-xl font-bold text-gray-800 mb-4">
                 Your profile
               </h1>
-              <ProfileEditor member={member} shareLocation={shareLocation} />
+              <ProfileEditor
+                member={member}
+                shareLocation={shareLocation}
+                outlookIcsUrl={outlookIcsUrl}
+              />
             </>
           ) : (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
